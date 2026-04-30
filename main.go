@@ -117,7 +117,7 @@ const htmlTemplate = `<!DOCTYPE html>
         tr.selected td { background: var(--selected); }
         
         .name-cell { display: flex; align-items: center; overflow: hidden; }
-        .name-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: none; -webkit-user-select: none; }
+        .name-text { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: none; -webkit-user-select: none; }
         .icon { width: 24px; font-size: 1.2rem; display: inline-flex; align-items: center; justify-content: center; margin-right: 16px; flex-shrink: 0; }
         .folder-icon { color: var(--primary); }
         .file-icon { color: var(--secondary); }
@@ -589,21 +589,28 @@ const htmlTemplate = `<!DOCTYPE html>
                 const tdName = document.createElement('td');
                 const nameDiv = document.createElement('div');
                 nameDiv.className = 'name-cell';
+                const clickableWrapper = document.createElement('div');
+                clickableWrapper.style.display = 'flex';
+                clickableWrapper.style.alignItems = 'center';
+                clickableWrapper.style.maxWidth = '100%';
+                clickableWrapper.style.width = 'fit-content';
+                clickableWrapper.style.cursor = 'pointer';
+                clickableWrapper.onclick = (e) => {
+                    e.stopPropagation();
+                    if (file.isDir) loadPath(file.path, true);
+                    else showModal(file);
+                };
+
                 const iconSpan = document.createElement('span');
                 iconSpan.className = 'icon ' + (file.isDir ? 'folder-icon' : 'file-icon');
                 iconSpan.textContent = file.isDir ? '📁' : '📄';
                 const nameSpan = document.createElement('span');
                 nameSpan.className = 'name-text';
                 nameSpan.textContent = file.name;
-                nameSpan.style.userSelect = 'none';
-                nameSpan.style.cursor = 'pointer';
-                nameSpan.onclick = (e) => {
-                    e.stopPropagation();
-                    if (file.isDir) loadPath(file.path, true);
-                    else showModal(file);
-                };
-                nameDiv.appendChild(iconSpan);
-                nameDiv.appendChild(nameSpan);
+                
+                clickableWrapper.appendChild(iconSpan);
+                clickableWrapper.appendChild(nameSpan);
+                nameDiv.appendChild(clickableWrapper);
                 tdName.appendChild(nameDiv);
                 
                 const tdSize = document.createElement('td');
