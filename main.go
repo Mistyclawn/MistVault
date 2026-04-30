@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 type FileInfo struct {
@@ -20,6 +21,14 @@ type FileInfo struct {
 	ModTimeRaw int64  `json:"modTimeRaw"`
 	IsDir      bool   `json:"isDir"`
 	Path       string `json:"path"`
+}
+
+type StorageInfo struct {
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	Total uint64 `json:"total"`
+	Free  uint64 `json:"free"`
+	Used  uint64 `json:"used"`
 }
 
 const (
@@ -149,6 +158,43 @@ const htmlTemplate = `<!DOCTYPE html>
         .context-menu-item { padding: 8px 16px; font-size: 0.875rem; cursor: pointer; color: var(--text); }
         .context-menu-item:hover { background: var(--hover); }
         .context-menu-item.danger { color: #d93025; }
+
+        /* Multi-selection styles */
+        .select-checkbox { width: 18px; height: 18px; cursor: pointer; margin-right: 12px; flex-shrink: 0; }
+        .selection-toolbar { display: none; position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--surface); border: 1px solid var(--border); border-radius: 40px; padding: 8px 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); z-index: 100; align-items: center; gap: 16px; }
+        .selection-count { font-weight: bold; border-right: 1px solid var(--border); padding-right: 16px; margin-right: 8px; }
+
+        /* Upload Manager */
+        .upload-manager { position: fixed; bottom: 24px; right: 24px; width: 350px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 200; display: none; flex-direction: column; overflow: hidden; max-height: 400px; }
+        .upload-header { padding: 12px 16px; background: var(--primary); color: white; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+        .upload-list { overflow-y: auto; flex-grow: 1; }
+        .upload-item { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+        .upload-item-info { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 0.8rem; }
+        .upload-item-name { flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+        .upload-progress-container { height: 6px; background: var(--hover); border-radius: 3px; overflow: hidden; margin-bottom: 4px; position: relative; }
+        .upload-progress-bar { height: 100%; background: var(--primary); width: 0%; transition: width 0.3s; }
+        .upload-item-meta { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-dim); }
+        .upload-cancel-btn { cursor: pointer; color: var(--text-dim); font-size: 1.1rem; }
+        .upload-cancel-btn:hover { color: #d93025; }
+
+        /* Storage Section */
+        .storage-section { padding: 16px 24px; border-top: 1px solid var(--border); margin-top: auto; }
+        .storage-item { margin-bottom: 12px; }
+        .storage-info { display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 4px; color: var(--text-dim); }
+        .storage-bar-container { height: 6px; background: var(--hover); border-radius: 3px; overflow: hidden; }
+        .storage-bar { height: 100%; background: var(--primary); }
+        .storage-bar.warning { background: #f4b400; }
+        .storage-bar.danger { background: #d93025; }
+
+        /* Breadcrumb Truncation */
+        .breadcrumb { max-width: 100%; overflow: hidden; position: relative; display: flex; align-items: center; }
+        .breadcrumb-scroll { display: flex; align-items: center; overflow: hidden; text-overflow: ellipsis; }
+        .breadcrumb-scroll span { flex-shrink: 0; }
+        .breadcrumb-scroll span.truncated { color: var(--text-dim); cursor: pointer; padding: 4px; }
+        
+        @media (max-width: 600px) {
+            .sidebar { position: fixed; z-index: 1000; height: 100%; }
+        }
     </style>
 </head>
 <body>
@@ -177,14 +223,18 @@ const htmlTemplate = `<!DOCTYPE html>
                     </div>
                     <div id="favorites-list"></div>
                 </div>
+                <div class="storage-section" id="storage-list">
+                    <div class="sidebar-title">Storage</div>
+                </div>
             </div>
             
             <div class="content-area">
                 <div class="toolbar">
-                    <div style="display: flex; flex-grow: 1; align-items: center; border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; background: var(--bg);">
-                        <div id="breadcrumb" class="breadcrumb" style="flex-grow: 1; display: flex;" onclick="editPath()"></div>
+                    <div style="display: flex; flex-grow: 1; align-items: center; border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; background: var(--bg); overflow: hidden; min-width: 0;">
+                        <div id="breadcrumb" class="breadcrumb" style="flex-grow: 1; min-width: 0;"></div>
                         <input type="text" id="path-input" style="display: none; width: 100%; background: transparent; border: none; color: var(--text); outline: none; font-size: 1rem;" onkeydown="handlePathInput(event)">
-                        <button class="action-btn" onclick="copyCurrentPath()" title="Copy Path" style="margin-left: 8px;">📋</button>
+                        <button class="action-btn" onclick="editPath()" title="Edit Path" style="margin-left: 8px;">✏️</button>
+                        <button class="action-btn" onclick="copyCurrentPath()" title="Copy Path" style="margin-left: 4px;">📋</button>
                     </div>
                     <button class="btn" onclick="createFolder()">📁 New Folder</button>
                     <button class="btn" id="fav-btn" onclick="toggleFavorite()" title="Add to Favorites">⭐</button>
@@ -196,6 +246,7 @@ const htmlTemplate = `<!DOCTYPE html>
                     <table id="file-table">
                         <thead>
                             <tr>
+                                <th style="width: 40px;"><input type="checkbox" id="select-all" onclick="toggleSelectAll()"></th>
                                 <th class="col-name" id="th-name" onclick="sortFiles('name')">Name ↑</th>
                                 <th class="col-size" id="th-size" onclick="sortFiles('size')">Size</th>
                                 <th class="col-time" id="th-time" onclick="sortFiles('time')">Modified</th>
@@ -208,6 +259,22 @@ const htmlTemplate = `<!DOCTYPE html>
                 </div>
             </div>
         </div>
+    </div>
+
+    <div id="selection-toolbar" class="selection-toolbar">
+        <span class="selection-count" id="selection-count">0 files selected</span>
+        <button class="btn" onclick="copySelected()">📋 Copy</button>
+        <button class="btn" onclick="cutSelected()">✂️ Move</button>
+        <button class="btn danger" onclick="deleteSelected()" style="background: #d93025; color: white;">🗑️ Delete</button>
+        <button class="btn" onclick="clearSelection()" style="border: none;">✕</button>
+    </div>
+
+    <div id="upload-manager" class="upload-manager">
+        <div class="upload-header" onclick="toggleUploadManager()">
+            <span id="upload-summary">Uploads (0)</span>
+            <span id="upload-toggle-icon">▼</span>
+        </div>
+        <div class="upload-list" id="upload-list"></div>
     </div>
 
     <div id="loading" class="loading-overlay">
@@ -247,33 +314,13 @@ const htmlTemplate = `<!DOCTYPE html>
 
     <script>
         let currentPath = '/';
-
-        function toggleSidebar() {
-            const sidebar = document.querySelector('.sidebar');
-            if (sidebar.style.display === 'none') {
-                sidebar.style.display = 'flex';
-            } else {
-                sidebar.style.display = 'none';
-            }
-        }
-
         let currentSort = { col: 'name', asc: true };
         let currentFilesData = [];
-
-        function sortFiles(col) {
-            if (currentSort.col === col) {
-                currentSort.asc = !currentSort.asc;
-            } else {
-                currentSort.col = col;
-                currentSort.asc = true;
-            }
-            document.querySelectorAll('th').forEach(th => th.textContent = th.textContent.replace(' ↑', '').replace(' ↓', ''));
-            const th = document.getElementById('th-' + col);
-            if (th) th.textContent += (currentSort.asc ? ' ↑' : ' ↓');
-            renderFiles(currentFilesData);
-        }
         let clipboard = null;
-        
+        let selectedFiles = new Set();
+        let activeUploads = {};
+        let favorites = [];
+        let currentTheme = '';
 
         const fileList = document.getElementById('file-list');
         const breadcrumb = document.getElementById('breadcrumb');
@@ -284,11 +331,30 @@ const htmlTemplate = `<!DOCTYPE html>
         const contextMenu = document.getElementById('context-menu');
         const dropZone = document.getElementById('drop-zone');
         const dragOverlay = document.getElementById('drag-overlay');
+        const selectionToolbar = document.getElementById('selection-toolbar');
+        const selectionCountText = document.getElementById('selection-count');
+        const storageList = document.getElementById('storage-list');
 
-        
-        let favorites = [];
-        let currentTheme = '';
-        
+        function toggleSidebar() {
+            const sidebar = document.querySelector('.sidebar');
+            sidebar.style.display = sidebar.style.display === 'none' ? 'flex' : 'none';
+        }
+
+        function sortFiles(col) {
+            if (currentSort.col === col) {
+                currentSort.asc = !currentSort.asc;
+            } else {
+                currentSort.col = col;
+                currentSort.asc = true;
+            }
+            document.querySelectorAll('th').forEach(th => {
+                if (th.id) th.textContent = th.textContent.replace(' ↑', '').replace(' ↓', '');
+            });
+            const th = document.getElementById('th-' + col);
+            if (th) th.textContent += (currentSort.asc ? ' ↑' : ' ↓');
+            renderFiles(currentFilesData);
+        }
+
         async function loadSettings() {
             try {
                 const res = await fetch('/api/settings');
@@ -322,25 +388,54 @@ const htmlTemplate = `<!DOCTYPE html>
                 console.error("Failed to save settings", e);
             }
         }
-        
-        loadSettings();
-
 
         function toggleTheme() {
             const isDark = document.body.classList.toggle('dark-theme');
-            currentTheme = isDark ? 'dark' : 'light'; saveSettingsToServer();
+            currentTheme = isDark ? 'dark' : 'light'; 
+            saveSettingsToServer();
             document.getElementById('theme-btn').textContent = isDark ? '☀️ Light' : '🌙 Dark';
         }
 
-        renderFavorites();
-        updatePasteButton();
-        
+        async function loadStorageInfo() {
+            try {
+                const res = await fetch('/api/storage');
+                const data = await res.json();
+                renderStorage(data);
+            } catch (e) { console.error("Failed to load storage info", e); }
+        }
+
+        function renderStorage(data) {
+            const title = storageList.querySelector('.sidebar-title');
+            storageList.innerHTML = '';
+            storageList.appendChild(title);
+            data.forEach(item => {
+                const usedPct = (item.used / item.total) * 100;
+                const div = document.createElement('div');
+                div.className = 'storage-item';
+                div.innerHTML = '<div class="storage-info">' +
+                        '<span>' + item.name + '</span>' +
+                        '<span>' + formatBytes(item.used) + ' / ' + formatBytes(item.total) + '</span>' +
+                    '</div>' +
+                    '<div class="storage-bar-container">' +
+                        '<div class="storage-bar ' + (usedPct > 90 ? 'danger' : usedPct > 75 ? 'warning' : '') + '" style="width: ' + usedPct + '%"></div>' +
+                    '</div>';
+                storageList.appendChild(div);
+            });
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
         window.addEventListener('popstate', (event) => {
             const path = new URLSearchParams(window.location.search).get('path') || '/';
             loadPath(path, false);
         });
 
-        
         function editPath() {
             const bc = document.getElementById('breadcrumb');
             const input = document.getElementById('path-input');
@@ -349,35 +444,38 @@ const htmlTemplate = `<!DOCTYPE html>
             input.value = currentPath;
             input.focus();
         }
+
         function handlePathInput(e) {
             if (e.key === 'Enter') {
-                const input = document.getElementById('path-input');
-                loadPath(input.value, true);
+                loadPath(document.getElementById('path-input').value, true);
                 cancelPathEdit();
             } else if (e.key === 'Escape') {
                 cancelPathEdit();
             }
         }
+
         function cancelPathEdit() {
             document.getElementById('breadcrumb').style.display = 'flex';
             document.getElementById('path-input').style.display = 'none';
         }
+
         document.addEventListener('click', (e) => {
             const input = document.getElementById('path-input');
-            if (input && input.style.display === 'block' && e.target !== input && !e.target.closest('#breadcrumb')) {
+            if (input && input.style.display === 'block' && e.target !== input && !e.target.closest('#breadcrumb') && !e.target.closest('.action-btn')) {
                 cancelPathEdit();
             }
             contextMenu.style.display = 'none';
         });
+
         function copyCurrentPath() {
             navigator.clipboard.writeText(currentPath).then(() => {
                 alert('경로가 복사되었습니다!');
             });
         }
 
-
         async function loadPath(path, push = true) {
             loading.style.display = 'flex';
+            clearSelection();
             try {
                 const response = await fetch('/api/list?path=' + encodeURIComponent(path));
                 if (!response.ok) throw new Error('Network response was not ok');
@@ -385,8 +483,10 @@ const htmlTemplate = `<!DOCTYPE html>
                 
                 currentPath = data.currentPath || '/';
                 renderBreadcrumb(currentPath);
-                currentFilesData = data.files || []; renderFiles(currentFilesData);
+                currentFilesData = data.files || []; 
+                renderFiles(currentFilesData);
                 updateFavButton();
+                loadStorageInfo();
                 
                 if (push) {
                     const newUrl = currentPath === '/' ? window.location.pathname : window.location.pathname + '?path=' + encodeURIComponent(currentPath);
@@ -394,7 +494,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 }
             } catch (err) {
                 console.error('Failed to load path:', err);
-                fileList.innerHTML = '<tr><td colspan="4" class="empty-state">경로를 로드할 수 없습니다.</td></tr>';
+                fileList.innerHTML = '<tr><td colspan="5" class="empty-state">경로를 로드할 수 없습니다.</td></tr>';
             } finally {
                 loading.style.display = 'none';
             }
@@ -404,24 +504,33 @@ const htmlTemplate = `<!DOCTYPE html>
             const parts = path.split('/').filter(p => p);
             breadcrumb.innerHTML = '';
             
+            const bcScroll = document.createElement('div');
+            bcScroll.className = 'breadcrumb-scroll';
+            bcScroll.style.cssText = 'display: flex; align-items: center; overflow: hidden; white-space: nowrap; flex-grow: 1; mask-image: linear-gradient(to right, transparent, black 20px); -webkit-mask-image: linear-gradient(to right, transparent, black 20px);';
+            breadcrumb.appendChild(bcScroll);
+
             const rootSpan = document.createElement('span');
             rootSpan.textContent = 'MistVault';
-            rootSpan.onclick = () => loadPath('/', true);
-            breadcrumb.appendChild(rootSpan);
+            rootSpan.onclick = (e) => { e.stopPropagation(); loadPath('/', true); };
+            bcScroll.appendChild(rootSpan);
 
             let accumulatedPath = '';
-            parts.forEach(part => {
+            parts.forEach((part, index) => {
                 accumulatedPath += '/' + part;
                 const thisPath = accumulatedPath;
                 const sepSpan = document.createElement('span');
                 sepSpan.className = 'separator';
                 sepSpan.textContent = '›';
-                breadcrumb.appendChild(sepSpan);
+                bcScroll.appendChild(sepSpan);
                 const partSpan = document.createElement('span');
                 partSpan.textContent = part;
-                partSpan.onclick = () => loadPath(thisPath, true);
-                breadcrumb.appendChild(partSpan);
+                partSpan.onclick = (e) => { e.stopPropagation(); loadPath(thisPath, true); };
+                bcScroll.appendChild(partSpan);
             });
+
+            setTimeout(() => {
+                bcScroll.scrollLeft = bcScroll.scrollWidth;
+            }, 0);
         }
 
         function renderFiles(filesData) {
@@ -440,25 +549,36 @@ const htmlTemplate = `<!DOCTYPE html>
             });
 
             fileList.innerHTML = '';
+            document.getElementById('select-all').checked = false;
+
             if (currentPath !== '/' && currentPath !== '') {
                 const parentPath = currentPath.substring(0, currentPath.lastIndexOf('/')) || '/';
                 const tr = document.createElement('tr');
-                tr.innerHTML = '<td colspan="4"><div class="name-cell"><span class="icon folder-icon">📁</span><span class="name-text">..</span></div></td>';
+                tr.innerHTML = '<td></td><td colspan="4"><div class="name-cell"><span class="icon folder-icon">📁</span><span class="name-text">..</span></div></td>';
                 tr.ondblclick = () => loadPath(parentPath, true);
-                tr.onclick = () => selectRow(tr);
                 fileList.appendChild(tr);
             }
 
             if (files.length === 0) {
                 const tr = document.createElement('tr');
-                tr.innerHTML = '<td colspan="4" class="empty-state">이 폴더는 비어 있습니다.</td>';
+                tr.innerHTML = '<td colspan="5" class="empty-state">이 폴더는 비어 있습니다.</td>';
                 fileList.appendChild(tr);
                 return;
             }
 
             files.forEach(file => {
                 const tr = document.createElement('tr');
-                
+                tr.dataset.path = file.path;
+                if (selectedFiles.has(file.path)) tr.classList.add('selected');
+
+                const tdCheck = document.createElement('td');
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.className = 'select-checkbox';
+                cb.checked = selectedFiles.has(file.path);
+                cb.onclick = (e) => { e.stopPropagation(); toggleFileSelection(file.path, cb.checked); };
+                tdCheck.appendChild(cb);
+
                 const tdName = document.createElement('td');
                 const nameDiv = document.createElement('div');
                 nameDiv.className = 'name-cell';
@@ -468,7 +588,6 @@ const htmlTemplate = `<!DOCTYPE html>
                 const nameSpan = document.createElement('span');
                 nameSpan.className = 'name-text';
                 nameSpan.textContent = file.name;
-                nameSpan.title = file.name; // Tooltip for long names
                 nameDiv.appendChild(iconSpan);
                 nameDiv.appendChild(nameSpan);
                 tdName.appendChild(nameDiv);
@@ -492,22 +611,27 @@ const htmlTemplate = `<!DOCTYPE html>
                 };
                 tdActions.appendChild(actionBtn);
                 
+                tr.appendChild(tdCheck);
                 tr.appendChild(tdName);
                 tr.appendChild(tdSize);
                 tr.appendChild(tdTime);
                 tr.appendChild(tdActions);
                 
-                tr.ondblclick = () => {
-                    if (file.isDir) {
-                        loadPath(file.path, true);
+                tr.ondblclick = () => file.isDir ? loadPath(file.path, true) : showModal(file);
+                tr.onclick = (e) => {
+                    if (e.ctrlKey || e.metaKey) {
+                        toggleFileSelection(file.path, !selectedFiles.has(file.path));
                     } else {
-                        showModal(file);
+                        clearSelection();
+                        toggleFileSelection(file.path, true);
                     }
                 };
-                tr.onclick = () => selectRow(tr);
                 tr.oncontextmenu = (e) => {
                     e.preventDefault();
-                    selectRow(tr);
+                    if (!selectedFiles.has(file.path)) {
+                        clearSelection();
+                        toggleFileSelection(file.path, true);
+                    }
                     showContextMenu(e.clientX, e.clientY, file);
                 };
 
@@ -515,34 +639,85 @@ const htmlTemplate = `<!DOCTYPE html>
             });
         }
 
-        function selectRow(tr) {
-            document.querySelectorAll('#file-list tr').forEach(r => r.classList.remove('selected'));
-            tr.classList.add('selected');
+        function toggleFileSelection(path, selected) {
+            if (selected) selectedFiles.add(path);
+            else selectedFiles.delete(path);
+            
+            document.querySelectorAll('#file-list tr[data-path="' + CSS.escape(path) + '"]').forEach(tr => {
+                tr.classList.toggle('selected', selected);
+                tr.querySelector('.select-checkbox').checked = selected;
+            });
+            updateSelectionUI();
         }
 
-        
+        function toggleSelectAll() {
+            const checked = document.getElementById('select-all').checked;
+            currentFilesData.forEach(f => {
+                if (checked) selectedFiles.add(f.path);
+                else selectedFiles.delete(f.path);
+            });
+            renderFiles(currentFilesData);
+            updateSelectionUI();
+        }
+
+        function clearSelection() {
+            selectedFiles.clear();
+            document.querySelectorAll('#file-list tr').forEach(tr => {
+                tr.classList.remove('selected');
+                const cb = tr.querySelector('.select-checkbox');
+                if (cb) cb.checked = false;
+            });
+            updateSelectionUI();
+        }
+
+        function updateSelectionUI() {
+            const count = selectedFiles.size;
+            selectionToolbar.style.display = count > 0 ? 'flex' : 'none';
+            selectionCountText.textContent = count + ' files selected';
+        }
+
+        async function deleteSelected() {
+            if (!confirm('정말 ' + selectedFiles.size + '개의 항목을 삭제하시겠습니까?')) return;
+            loading.style.display = 'flex';
+            for (const path of selectedFiles) {
+                await fetch('/api/delete', { 
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({path})
+                });
+            }
+            loadPath(currentPath, false);
+        }
+
+        function copySelected() {
+            clipboard = { action: 'copy', paths: Array.from(selectedFiles) };
+            alert(selectedFiles.size + '개 항목이 복사되었습니다.');
+            updatePasteButton();
+        }
+
+        function cutSelected() {
+            clipboard = { action: 'move', paths: Array.from(selectedFiles) };
+            alert(selectedFiles.size + '개 항목이 잘라내기되었습니다.');
+            updatePasteButton();
+        }
+
         function toggleFavorites() {
             const list = document.getElementById('favorites-list');
             const icon = document.getElementById('fav-toggle-icon');
-            if (list.style.display === 'none') {
-                list.style.display = 'block';
-                icon.textContent = '▼';
-            } else {
-                list.style.display = 'none';
-                icon.textContent = '▶';
-            }
+            const isHidden = list.style.display === 'none';
+            list.style.display = isHidden ? 'block' : 'none';
+            icon.textContent = isHidden ? '▼' : '▶';
         }
 
-        // Favorites
         function updateFavButton() {
             favBtn.textContent = favorites.some(f => f.path === currentPath) ? '⭐' : '☆';
         }
+
         function toggleFavorite() {
             if (currentPath === '/') return; 
             const index = favorites.findIndex(f => f.path === currentPath);
-            if (index > -1) {
-                favorites.splice(index, 1);
-            } else {
+            if (index > -1) favorites.splice(index, 1);
+            else {
                 const name = currentPath.split('/').pop() || currentPath;
                 favorites.push({ name, path: currentPath });
             }
@@ -550,12 +725,13 @@ const htmlTemplate = `<!DOCTYPE html>
             renderFavorites();
             updateFavButton();
         }
+
         function renderFavorites() {
             favList.innerHTML = '';
             favorites.forEach((fav, idx) => {
                 const div = document.createElement('div');
                 div.className = 'nav-item';
-                div.innerHTML = '<div class="nav-content"><i>⭐</i> <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + fav.name + '</span></div><div class="remove-fav" title="Remove">&times;</div>';
+                div.innerHTML = '<div class="nav-content"><i>⭐</i> <span>' + fav.name + '</span></div><div class="remove-fav" title="Remove">&times;</div>';
                 div.onclick = () => loadPath(fav.path, true);
                 div.querySelector('.remove-fav').onclick = (e) => {
                     e.stopPropagation();
@@ -568,7 +744,6 @@ const htmlTemplate = `<!DOCTYPE html>
             });
         }
 
-        // Context Menu
         function showContextMenu(x, y, file) {
             contextMenu.style.display = 'block';
             contextMenu.style.left = Math.min(x, window.innerWidth - contextMenu.offsetWidth) + 'px';
@@ -583,7 +758,7 @@ const htmlTemplate = `<!DOCTYPE html>
             document.getElementById('ctx-rename').onclick = async () => {
                 const newName = prompt('Enter new name:', file.name);
                 if(newName && newName !== file.name) {
-                    const newPath = currentPath === '/' ? '/' + newName : currentPath + '/' + newName;
+                    const newPath = currentPath === '/' ? '/' + newName : currentPath + (currentPath.endsWith('/') ? '' : '/') + newName;
                     loading.style.display = 'flex';
                     try {
                         await fetch('/api/move', { 
@@ -597,11 +772,11 @@ const htmlTemplate = `<!DOCTYPE html>
             };
 
             document.getElementById('ctx-copy').onclick = () => {
-                clipboard = { action: 'copy', path: file.path, name: file.name };
+                clipboard = { action: 'copy', paths: [file.path] };
                 updatePasteButton();
             };
             document.getElementById('ctx-cut').onclick = () => {
-                clipboard = { action: 'move', path: file.path, name: file.name };
+                clipboard = { action: 'move', paths: [file.path] };
                 updatePasteButton();
             };
             document.getElementById('ctx-delete').onclick = async () => {
@@ -620,7 +795,7 @@ const htmlTemplate = `<!DOCTYPE html>
         function updatePasteButton() {
             if (clipboard) {
                 pasteBtn.style.display = 'flex';
-                pasteBtn.textContent = '📋 Paste (' + clipboard.name + ')';
+                pasteBtn.textContent = '📋 Paste (' + clipboard.paths.length + ')';
             } else {
                 pasteBtn.style.display = 'none';
             }
@@ -628,25 +803,28 @@ const htmlTemplate = `<!DOCTYPE html>
 
         async function handlePaste() {
             if(!clipboard) return;
-            const destPath = currentPath === '/' ? '/' + clipboard.name : currentPath + '/' + clipboard.name;
-            if (destPath === clipboard.path) return;
-
             loading.style.display = 'flex';
             try {
-                if (clipboard.action === 'move') {
-                    await fetch('/api/move', { 
-                        method: 'POST', 
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ oldPath: clipboard.path, newPath: destPath }) 
-                    });
-                    clipboard = null;
-                } else {
-                    await fetch('/api/copy', { 
-                        method: 'POST', 
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ src: clipboard.path, dst: destPath }) 
-                    });
+                for (const src of clipboard.paths) {
+                    const name = src.split('/').pop();
+                    const dest = currentPath === '/' ? '/' + name : currentPath + (currentPath.endsWith('/') ? '' : '/') + name;
+                    if (src === dest) continue;
+                    
+                    if (clipboard.action === 'move') {
+                        await fetch('/api/move', { 
+                            method: 'POST', 
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ oldPath: src, newPath: dest }) 
+                        });
+                    } else {
+                        await fetch('/api/copy', { 
+                            method: 'POST', 
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ src: src, dst: dest }) 
+                        });
+                    }
                 }
+                if (clipboard.action === 'move') clipboard = null;
                 updatePasteButton();
                 loadPath(currentPath, false);
             } catch(e) {
@@ -656,94 +834,134 @@ const htmlTemplate = `<!DOCTYPE html>
         }
 
         function createFolder() {
-            if (document.getElementById('new-folder-input')) {
-                document.getElementById('new-folder-input').focus();
-                return;
-            }
-            
+            if (document.getElementById('new-folder-input')) return;
             const tr = document.createElement('tr');
-            
-            const tdName = document.createElement('td');
-            const nameDiv = document.createElement('div');
-            nameDiv.className = 'name-cell';
-            nameDiv.innerHTML = '<span class="icon folder-icon">📁</span><input type="text" id="new-folder-input" placeholder="새 폴더 이름" style="flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--primary); outline: none; border-radius: 4px; padding: 4px 8px;" />';
-            tdName.appendChild(nameDiv);
-            
-            const tdSize = document.createElement('td'); tdSize.className = 'col-size';
-            const tdTime = document.createElement('td'); tdTime.className = 'col-time';
-            const tdActions = document.createElement('td'); tdActions.className = 'col-actions';
-            
-            tdActions.innerHTML = '<button class="action-btn" title="Create" id="new-folder-save">✅</button><button class="action-btn" title="Cancel" id="new-folder-cancel">❌</button>';
-            
-            tr.appendChild(tdName);
-            tr.appendChild(tdSize);
-            tr.appendChild(tdTime);
-            tr.appendChild(tdActions);
-            
+            tr.innerHTML = '<td></td><td colspan="4"><div class="name-cell"><span class="icon folder-icon">📁</span><input type="text" id="new-folder-input" placeholder="Name" style="flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--primary); outline: none; border-radius: 4px; padding: 4px 8px;" /> <button class="action-btn" id="new-folder-save">✅</button><button class="action-btn" id="new-folder-cancel">❌</button></div></td>';
             fileList.insertBefore(tr, fileList.firstChild);
-            
             const input = document.getElementById('new-folder-input');
             input.focus();
             
             const submit = async () => {
                 const name = input.value.trim();
-                if (!name) { cancel(); return; }
-                const newPath = currentPath === '/' ? '/' + name : currentPath + '/' + name;
+                if (!name) { tr.remove(); return; }
+                const newPath = currentPath === '/' ? '/' + name : currentPath + (currentPath.endsWith('/') ? '' : '/') + name;
                 loading.style.display = 'flex';
                 try {
-                    const res = await fetch('/api/mkdir', { 
-                        method: 'POST', 
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ path: newPath }) 
-                    });
-                    if (!res.ok) throw new Error('생성 실패');
-                    setTimeout(() => {
-                        loadPath(currentPath, false);
-                    }, 100);
-                } catch(e) {
-                    alert('폴더 생성 실패');
-                    loading.style.display = 'none';
-                }
+                    await fetch('/api/mkdir', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ path: newPath }) });
+                    loadPath(currentPath, false);
+                } catch(e) { alert('폴더 생성 실패'); loading.style.display = 'none'; }
             };
-            
-            const cancel = () => {
-                if (tr.parentNode) tr.parentNode.removeChild(tr);
-            };
-            
-            input.onkeydown = (e) => {
-                if (e.key === 'Enter') submit();
-                if (e.key === 'Escape') cancel();
-            };
+            input.onkeydown = (e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') tr.remove(); };
             document.getElementById('new-folder-save').onclick = submit;
-            document.getElementById('new-folder-cancel').onclick = cancel;
+            document.getElementById('new-folder-cancel').onclick = () => tr.remove();
         }
 
-        // Upload
-        async function handleUpload(event) {
+        function handleUpload(event) {
             const files = event.target.files || (event.dataTransfer && event.dataTransfer.files);
             if (!files || files.length === 0) return;
             
-            const formData = new FormData();
-            for (let i = 0; i < files.length; i++) {
-                formData.append('file', files[i]);
-            }
+            document.getElementById('upload-manager').style.display = 'flex';
             
-            loading.style.display = 'flex';
-            try {
-                await fetch('/api/upload?path=' + encodeURIComponent(currentPath), {
-                    method: 'POST',
-                    body: formData
-                });
-                loadPath(currentPath, false);
-            } catch(e) {
-                alert('업로드 실패');
-            } finally {
-                loading.style.display = 'none';
-                if(event.target.value) event.target.value = '';
+            for (let i = 0; i < files.length; i++) {
+                uploadFile(files[i]);
+            }
+            if(event.target.value) event.target.value = '';
+        }
+
+        function uploadFile(file) {
+            const uploadId = Math.random().toString(36).substr(2, 9);
+            const xhr = new XMLHttpRequest();
+            const startTime = Date.now();
+            
+            activeUploads[uploadId] = { xhr, file, startTime };
+            
+            const item = document.createElement('div');
+            item.className = 'upload-item';
+            item.id = 'upload-' + uploadId;
+            item.innerHTML = '<div class="upload-item-info">' +
+                    '<span class="upload-item-name">' + file.name + '</span>' +
+                    '<span class="upload-cancel-btn" onclick="cancelUpload(\'' + uploadId + '\')">✕</span>' +
+                '</div>' +
+                '<div class="upload-progress-container">' +
+                    '<div class="upload-progress-bar" id="pb-' + uploadId + '"></div>' +
+                '</div>' +
+                '<div class="upload-item-meta">' +
+                    '<span id="pct-' + uploadId + '">0%</span>' +
+                    '<span id="size-' + uploadId + '">0 / ' + formatBytes(file.size) + '</span>' +
+                    '<span id="eta-' + uploadId + '">--:--</span>' +
+                '</div>';
+            document.getElementById('upload-list').appendChild(item);
+            updateUploadSummary();
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) {
+                    const pct = Math.round((e.loaded / e.total) * 100);
+                    const pb = document.getElementById('pb-' + uploadId);
+                    const pctText = document.getElementById('pct-' + uploadId);
+                    const sizeText = document.getElementById('size-' + uploadId);
+                    const etaText = document.getElementById('eta-' + uploadId);
+                    
+                    if (pb) pb.style.width = pct + '%';
+                    if (pctText) pctText.textContent = pct + '%';
+                    if (sizeText) sizeText.textContent = formatBytes(e.loaded) + ' / ' + formatBytes(e.total);
+                    
+                    const elapsed = (Date.now() - startTime) / 1000;
+                    const speed = e.loaded / elapsed;
+                    const remaining = (e.total - e.loaded) / speed;
+                    if (etaText) etaText.textContent = isFinite(remaining) ? formatTime(remaining) : '--:--';
+                }
+            };
+
+            xhr.onload = () => {
+                delete activeUploads[uploadId];
+                document.getElementById('upload-' + uploadId).remove();
+                updateUploadSummary();
+                if (Object.keys(activeUploads).length === 0) {
+                    loadPath(currentPath, false);
+                    setTimeout(() => { document.getElementById('upload-manager').style.display = 'none'; }, 2000);
+                }
+            };
+            
+            xhr.onerror = () => alert('Upload failed: ' + file.name);
+            
+            xhr.open('POST', '/api/upload?path=' + encodeURIComponent(currentPath));
+            xhr.send(formData);
+        }
+
+        function cancelUpload(id) {
+            if (activeUploads[id]) {
+                activeUploads[id].xhr.abort();
+                delete activeUploads[id];
+                document.getElementById('upload-' + id).remove();
+                updateUploadSummary();
             }
         }
 
-        // Drag & Drop
+        function updateUploadSummary() {
+            const count = Object.keys(activeUploads).length;
+            document.getElementById('upload-summary').textContent = 'Uploads (' + count + ')';
+        }
+
+        function toggleUploadManager() {
+            const list = document.getElementById('upload-list');
+            const icon = document.getElementById('upload-toggle-icon');
+            const isHidden = list.style.display === 'none';
+            list.style.display = isHidden ? 'block' : 'none';
+            icon.textContent = isHidden ? '▼' : '▲';
+        }
+
+        function formatTime(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            if (h > 0) return h + 'h ' + m + 'm ' + s + 's';
+            if (m > 0) return m + 'm ' + s + 's';
+            return s + 's';
+        }
+
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dragOverlay.style.display = 'flex'; });
         dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); dragOverlay.style.display = 'none'; });
         dropZone.addEventListener('drop', (e) => {
@@ -752,11 +970,9 @@ const htmlTemplate = `<!DOCTYPE html>
             handleUpload(e);
         });
 
-        // Modal
         const modal = document.getElementById('file-modal');
         function showModal(file) {
             document.getElementById('modal-filename').textContent = file.name;
-            
             const ext = file.name.split('.').pop().toLowerCase();
             document.getElementById('modal-type').textContent = ext.toUpperCase() + ' File';
             document.getElementById('modal-size').textContent = file.size;
@@ -768,9 +984,9 @@ const htmlTemplate = `<!DOCTYPE html>
             const imgExts = ['jpg','jpeg','png','gif','webp','bmp','svg'];
             const vidExts = ['mp4','webm','ogg','ts'];
             const audExts = ['mp3','wav','ogg','flac'];
+            const txtExts = ['txt','md','json','js','go','csv','html','css', 'log', 'sh', 'py', 'xml'];
             const fileUrl = '/api/download?path=' + encodeURIComponent(file.path);
             
-            const txtExts = ['txt','md','json','js','go','csv','html','css', 'log', 'sh', 'py', 'xml'];
             const saveBtn = document.getElementById('modal-save-btn');
             if(saveBtn) saveBtn.style.display = 'none';
 
@@ -790,22 +1006,13 @@ const htmlTemplate = `<!DOCTYPE html>
                     saveBtn.style.display = 'block';
                     saveBtn.onclick = async () => {
                         const content = document.getElementById('text-editor').value;
-                        const saveBtnOrig = saveBtn.textContent;
                         saveBtn.textContent = 'Saving...';
                         try {
-                            const res = await fetch('/api/save', {
-                                method: 'POST',
-                                headers: {'Content-Type': 'application/json'},
-                                body: JSON.stringify({path: file.path, content: content})
-                            });
-                            if (!res.ok) throw new Error('Save failed');
+                            await fetch('/api/save', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path: file.path, content}) });
                             saveBtn.textContent = 'Saved!';
                             loadPath(currentPath, false);
-                            setTimeout(() => { closeModal(); }, 700);
-                        } catch(e) {
-                            alert('저장 실패: ' + e);
-                            saveBtn.textContent = saveBtnOrig;
-                        }
+                            setTimeout(closeModal, 700);
+                        } catch(e) { alert('저장 실패'); saveBtn.textContent = 'Save'; }
                     };
                 }
             } else {
@@ -813,7 +1020,6 @@ const htmlTemplate = `<!DOCTYPE html>
             }
 
             document.getElementById('modal-download-btn').onclick = () => {
-
                 window.open('/api/download?path=' + encodeURIComponent(file.path), '_blank');
                 closeModal();
             };
@@ -821,7 +1027,7 @@ const htmlTemplate = `<!DOCTYPE html>
         }
         function closeModal() { modal.style.display = 'none'; }
         
-
+        loadSettings();
         loadPath(new URLSearchParams(window.location.search).get('path') || '/', false);
     </script>
 </body>
@@ -1106,6 +1312,57 @@ func apiCopyHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func apiStorageHandler(w http.ResponseWriter, r *http.Request) {
+	entries, err := os.ReadDir(rootDir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var storage []StorageInfo
+	
+	// Add root drive
+	var rootStat syscall.Statfs_t
+	if err := syscall.Statfs("/", &rootStat); err == nil {
+		total := rootStat.Blocks * uint64(rootStat.Bsize)
+		free := rootStat.Bfree * uint64(rootStat.Bsize)
+		storage = append(storage, StorageInfo{
+			Name:  "Main Drive",
+			Path:  "/",
+			Total: total,
+			Free:  free,
+			Used:  total - free,
+		})
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(rootDir, entry.Name())
+		var stat syscall.Statfs_t
+		err := syscall.Statfs(path, &stat)
+		if err != nil {
+			continue
+		}
+
+		total := stat.Blocks * uint64(stat.Bsize)
+		free := stat.Bfree * uint64(stat.Bsize)
+		if total == 0 { continue }
+
+		storage = append(storage, StorageInfo{
+			Name:  entry.Name(),
+			Path:  path,
+			Total: total,
+			Free:  free,
+			Used:  total - free,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(storage)
+}
+
 func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -1128,6 +1385,7 @@ func main() {
 	http.HandleFunc("/api/mkdir", apiMkdirHandler)
 	http.HandleFunc("/api/settings", apiSettingsHandler)
 	http.HandleFunc("/api/save", apiSaveHandler)
+	http.HandleFunc("/api/storage", apiStorageHandler)
 
 	log.Printf("👻 MistVault Explorer starting on port %s...\n", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
