@@ -65,6 +65,7 @@ const htmlTemplate = `<!DOCTYPE html>
         header { background: var(--surface); padding: 10px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; height: 48px;}
         .logo { display: flex; align-items: center; font-size: 1.25rem; color: var(--text); font-weight: 500; }
         .logo span { margin-right: 12px; font-size: 1.5rem; }
+        .hamburger { cursor: pointer; padding-right: 12px; font-size: 1.5rem; user-select: none; }
 
         .main-area { display: flex; flex-grow: 1; overflow: hidden; }
         
@@ -107,7 +108,7 @@ const htmlTemplate = `<!DOCTYPE html>
         tr.selected td { background: var(--selected); }
         
         .name-cell { display: flex; align-items: center; overflow: hidden; }
-        .name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .name-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .icon { width: 24px; font-size: 1.2rem; display: inline-flex; align-items: center; justify-content: center; margin-right: 16px; flex-shrink: 0; }
         .folder-icon { color: var(--primary); }
         .file-icon { color: var(--secondary); }
@@ -153,7 +154,10 @@ const htmlTemplate = `<!DOCTYPE html>
 <body>
     <div class="app-container">
         <header>
-            <div class="logo"><span>☁️</span> MistVault Explorer</div>
+            <div class="logo">
+                <div class="hamburger" onclick="toggleSidebar()">☰</div>
+                <span>☁️</span> MistVault Explorer
+            </div>
             <div style="display:flex; gap: 12px; align-items: center;">
                 <button class="btn" id="theme-btn" onclick="toggleTheme()">🌙 Dark</button>
                 <input type="file" id="upload-input" style="display:none" multiple onchange="handleUpload(event)">
@@ -226,7 +230,7 @@ const htmlTemplate = `<!DOCTYPE html>
             </div>
             <div class="modal-footer">
                 <button class="btn" onclick="closeModal()">Close</button>
-                
+                <button class="btn primary" id="modal-save-btn" style="display:none;">Save</button>
                 <button class="btn primary" id="modal-download-btn">Download</button>
             </div>
         </div>
@@ -243,6 +247,15 @@ const htmlTemplate = `<!DOCTYPE html>
 
     <script>
         let currentPath = '/';
+
+        function toggleSidebar() {
+            const sidebar = document.querySelector('.sidebar');
+            if (sidebar.style.display === 'none') {
+                sidebar.style.display = 'flex';
+            } else {
+                sidebar.style.display = 'none';
+            }
+        }
 
         let currentSort = { col: 'name', asc: true };
         let currentFilesData = [];
@@ -681,16 +694,48 @@ const htmlTemplate = `<!DOCTYPE html>
             const previewDiv = document.getElementById('modal-preview');
             previewDiv.innerHTML = '';
             const imgExts = ['jpg','jpeg','png','gif','webp','bmp','svg'];
-            const vidExts = ['mp4','webm','ogg'];
+            const vidExts = ['mp4','webm','ogg','ts'];
             const audExts = ['mp3','wav','ogg','flac'];
             const fileUrl = '/api/download?path=' + encodeURIComponent(file.path);
             
+            const txtExts = ['txt','md','json','js','go','csv','html','css', 'log', 'sh', 'py', 'xml'];
+            const saveBtn = document.getElementById('modal-save-btn');
+            if(saveBtn) saveBtn.style.display = 'none';
+
             if (imgExts.includes(ext)) {
                 previewDiv.innerHTML = '<img src="' + fileUrl + '" style="max-width: 100%; max-height: 250px; object-fit: contain; border-radius: 4px;">';
             } else if (vidExts.includes(ext)) {
                 previewDiv.innerHTML = '<video src="' + fileUrl + '" controls style="max-width: 100%; max-height: 250px; border-radius: 4px;"></video>';
             } else if (audExts.includes(ext)) {
                 previewDiv.innerHTML = '<audio src="' + fileUrl + '" controls style="width: 100%;"></audio>';
+            } else if (txtExts.includes(ext)) {
+                previewDiv.innerHTML = '<textarea id="text-editor" style="width:100%; height: 250px; resize: none; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 8px; font-family: monospace; box-sizing: border-box;"></textarea>';
+                fetch(fileUrl).then(res => res.text()).then(text => {
+                    const editor = document.getElementById('text-editor');
+                    if (editor) editor.value = text;
+                });
+                if(saveBtn) {
+                    saveBtn.style.display = 'block';
+                    saveBtn.onclick = async () => {
+                        const content = document.getElementById('text-editor').value;
+                        const saveBtnOrig = saveBtn.textContent;
+                        saveBtn.textContent = 'Saving...';
+                        try {
+                            const res = await fetch('/api/save', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({path: file.path, content: content})
+                            });
+                            if (!res.ok) throw new Error('Save failed');
+                            saveBtn.textContent = 'Saved!';
+                            loadPath(currentPath, false);
+                            setTimeout(() => { closeModal(); }, 700);
+                        } catch(e) {
+                            alert('저장 실패: ' + e);
+                            saveBtn.textContent = saveBtnOrig;
+                        }
+                    };
+                }
             } else {
                 previewDiv.innerHTML = '<div style="font-size: 4rem; margin: 20px 0;">📄</div>';
             }
@@ -810,6 +855,27 @@ func apiDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	fullPath := filepath.Join(rootDir, filepath.Clean(data.Path))
 	if err := os.RemoveAll(fullPath); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func apiSaveHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var data struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	fullPath := filepath.Join(rootDir, filepath.Clean(data.Path))
+	if err := os.WriteFile(fullPath, []byte(data.Content), 0644); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -946,6 +1012,7 @@ func main() {
 	http.HandleFunc("/api/move", apiRenameHandler)
 	http.HandleFunc("/api/copy", apiCopyHandler)
 	http.HandleFunc("/api/mkdir", apiMkdirHandler)
+	http.HandleFunc("/api/save", apiSaveHandler)
 
 	log.Printf("👻 MistVault Explorer starting on port %s...\n", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
