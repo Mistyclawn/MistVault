@@ -31,10 +31,31 @@ const getListeningPorts = () => {
 
 const getTailscaleIP = () => {
     try {
-        // tailscale ip -4 명령어로 현재 테일스케일 IPv4 주소 추출
-        return execSync("tailscale ip -4").toString().trim();
+        const { networkInterfaces } = require('os');
+        const nets = networkInterfaces();
+        for (const name of Object.keys(nets)) {
+            for (const net of nets[name]) {
+                // Tailscale IPv4는 항상 100.으로 시작함
+                if (net.family === 'IPv4' && net.address.startsWith('100.')) {
+                    return net.address;
+                }
+            }
+        }
+        // 인터페이스에서 못 찾으면 명령어 시도 (경로 다양화)
+        const paths = [
+            'tailscale',
+            '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
+            '/opt/homebrew/bin/tailscale',
+            '/usr/local/bin/tailscale'
+        ];
+        for (const p of paths) {
+            try {
+                return execSync(`${p} ip -4`).toString().trim();
+            } catch (e) { continue; }
+        }
+        return "localhost";
     } catch (e) {
-        return "localhost"; // 테일스케일 미구동 시 기본값
+        return "localhost";
     }
 };
 
