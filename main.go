@@ -100,7 +100,7 @@ const htmlTemplate = `<!DOCTYPE html>
         .file-list-container { flex-grow: 1; overflow-y: auto; overflow-x: auto; padding: 0 24px; position: relative; }
         .drag-overlay { display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(26,115,232,0.1); border: 2px dashed var(--primary); z-index: 50; align-items: center; justify-content: center; font-size: 1.5rem; color: var(--primary); pointer-events: none; }
         
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }
+        table { width: 100%; min-width: 600px; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }
         thead { position: sticky; top: 0; background: var(--bg); z-index: 10; box-shadow: 0 1px 0 var(--border); }
         th { text-align: left; padding: 12px 16px; color: var(--text-dim); font-size: 0.875rem; font-weight: 500; cursor: pointer; user-select: none; }
         td { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 0.875rem; cursor: default; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
