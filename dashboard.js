@@ -29,8 +29,18 @@ const getListeningPorts = () => {
     }
 };
 
+const getTailscaleIP = () => {
+    try {
+        // tailscale ip -4 명령어로 현재 테일스케일 IPv4 주소 추출
+        return execSync("tailscale ip -4").toString().trim();
+    } catch (e) {
+        return "localhost"; // 테일스케일 미구동 시 기본값
+    }
+};
+
 const server = http.createServer((req, res) => {
     const ports = getListeningPorts();
+    const tailscaleIP = getTailscaleIP();
     
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     
@@ -42,7 +52,8 @@ const server = http.createServer((req, res) => {
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
             body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #121212; color: #e0e0e0; padding: 20px; }
-            h1 { color: #bb86fc; }
+            h1 { color: #bb86fc; margin-bottom: 5px; }
+            .ip-info { color: #666; font-family: monospace; margin-bottom: 20px; font-size: 0.9em; }
             .card { background: #1e1e1e; border-radius: 8px; padding: 15px; margin-bottom: 10px; border: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
             .process { font-weight: bold; color: #03dac6; }
             .port { font-family: monospace; background: #333; padding: 2px 6px; border-radius: 4px; }
@@ -53,14 +64,14 @@ const server = http.createServer((req, res) => {
     </head>
     <body>
         <h1>👻 MistVault Dashboard</h1>
-        <p>M4 Mac mini에서 현재 실행 중인 서비스 목록이야.</p>
+        <div class="ip-info">Tailscale IP: ${tailscaleIP}</div>
         <a href="javascript:location.reload()" class="refresh">새로고침</a>
         <div>
     `;
 
     ports.forEach(p => {
-        // 주요 서비스에 대한 링크 자동 생성
-        const url = `http://localhost:${p.port}`;
+        // 테일스케일 IP 기반의 실제 외부 접속 주소 생성
+        const url = `http://${tailscaleIP}:${p.port}`;
         html += `
             <div class="card">
                 <div>
