@@ -52,6 +52,7 @@ chmod +x mistvault_storage_server
 ### 2. 서비스 실행
 - **수동 실행:** `./mistvault_storage_server`
 - **자동 실행:** `com.mistyclawn.mistvault.dashboard.plist`를 LaunchAgent에 등록하면 대시보드가 스토리지 서버를 자동으로 감시하고 실행함.
+- **서비스 종료:** `pkill -f mistvault_storage_server` 하면 게이트웨이가 자동 재실행
 
 ---
 
