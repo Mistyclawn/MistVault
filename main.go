@@ -68,7 +68,7 @@ const htmlTemplate = `<!DOCTYPE html>
 
         .main-area { display: flex; flex-grow: 1; overflow: hidden; }
         
-        .sidebar { width: 240px; background: var(--surface); border-right: 1px solid var(--border); padding: 16px 0; display: flex; flex-direction: column; overflow-y: auto;}
+        .sidebar { width: 240px; flex-shrink: 0; background: var(--surface); border-right: 1px solid var(--border); padding: 16px 0; display: flex; flex-direction: column; overflow-y: auto;}
         .sidebar-section { margin-top: 16px; }
         .sidebar-title { padding: 0 24px; font-size: 0.75rem; font-weight: bold; color: var(--text-dim); text-transform: uppercase; margin-bottom: 8px; }
         .nav-item { padding: 10px 24px; display: flex; align-items: center; justify-content: space-between; color: var(--text); text-decoration: none; font-weight: 500; font-size: 0.875rem; cursor: pointer;}
@@ -79,7 +79,7 @@ const htmlTemplate = `<!DOCTYPE html>
         .remove-fav { opacity: 0; cursor: pointer; color: var(--text-dim); }
         .nav-item:hover .remove-fav { opacity: 1; }
 
-        .content-area { flex-grow: 1; display: flex; flex-direction: column; background: var(--bg); overflow: hidden; position: relative; }
+        .content-area { flex-grow: 1; display: flex; flex-direction: column; background: var(--bg); overflow: hidden; position: relative; min-width: 0; }
         
         .toolbar { padding: 12px 24px; display: flex; align-items: center; border-bottom: 1px solid var(--border); background: var(--surface); gap: 16px; flex-wrap: wrap; }
         .breadcrumb { font-size: 1.1rem; color: var(--text); display: flex; align-items: center; white-space: nowrap; overflow-x: auto; scrollbar-width: none; flex-grow: 1;}
@@ -96,7 +96,7 @@ const htmlTemplate = `<!DOCTYPE html>
         .btn.jellyfin { background: #8e24aa; color: white; border-color: #8e24aa; }
         .btn.jellyfin:hover { filter: brightness(1.1); }
         
-        .file-list-container { flex-grow: 1; overflow-y: auto; padding: 0 24px; position: relative; }
+        .file-list-container { flex-grow: 1; overflow-y: auto; overflow-x: auto; padding: 0 24px; position: relative; }
         .drag-overlay { display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(26,115,232,0.1); border: 2px dashed var(--primary); z-index: 50; align-items: center; justify-content: center; font-size: 1.5rem; color: var(--primary); pointer-events: none; }
         
         table { width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }
