@@ -1,0 +1,16 @@
+# Binaries
+mistvault_storage_server
+mistvault_storage_server_old
+
+# OS Files
+.DS_Store
+*.log
+/tmp/mistvault_*
+
+# Config & Databases
+*.db
+*.plist
+
+# Node
+node_modules/
+npm-debug.log*

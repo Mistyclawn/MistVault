@@ -1,6 +1,6 @@
 # MistVault 👻
 
-맥 미니(M4)를 활용한 초경량 원격 저장소 & 미디어 스트리밍 보관함
+맥 미니(M4)를 활용한 초경량 원격 저장소 & 미디어 스트리밍 게이트웨이
 
 ---
 
@@ -9,54 +9,61 @@
 MistVault는 MistyClawn을 위해 설계된, M4 맥 미니 전용 저전력 원격 파일 저장 및 미디어 스트리밍 시스템이다. 
 
 - **운영 환경:** 애플 실리콘(M4) 맥 미니
-- **컨셉:** 도커를 쓰지 않는 네이티브 설치 방식으로 AcidClaw, MistClaw 등 LLM/비서 에이전트의 리소스 충돌 없이 구동
+- **컨셉:** 도커를 쓰지 않는 네이티브 빌드 방식으로 시스템 리소스(RAM/CPU) 점유를 최소화하여 AcidClaw, MistClaw 등 에이전트와 공존 가능
 - **주요 기능:**
-  - 외부/내부 어디서나 안전하게 파일 접근 (Tailscale, SFTP, FileBrowser 지원)
-  - 미디어 스트리밍 (Jellyfin)
-  - 관리/제어 자동화 스크립트
+  - **MistVault Gateway (Port 8088):** 서비스 상태 모니터링 및 통합 대시보드
+  - **MistVault Storage (Port 8097):** Go 네이티브로 구현된 고성능 파일 탐색기 (SPA 방식 UX)
+  - **Jellyfin (Port 8096):** 미디어 스트리밍 서버
 
 ---
 
-## 설계 배경
+## 핵심 구성 요소
 
-도커를 포함한 상시 서버 운영 시, Mac mini의 자원이 부족해 AI/LLM 어시스턴트(Buddy, MistClaw 등)의 작동이 어려울 수 있음. 따라서 네이티브(bare-metal) 방식으로 최고 효율/저점유 구조를 택함.
+### 1. MistVault Gateway (dashboard.js)
+- **자동 감지:** 시스템의 테일스케일(Tailscale) IP를 자동으로 찾아내어 외부 접속 링크 제공
+- **워치독(Watchdog):** 스토리지 서버 등 핵심 프로세스가 죽으면 10초 내에 자동으로 부활시킴
+- **UI:** 모던 다크 테마 기반의 반응형 게이트웨이
 
----
+### 2. MistVault Storage (main.go -> mistvault_storage_server)
+- **M4 Native:** Go 언어로 빌드되어 극도로 낮은 메모리 점유율 보장
+- **Explorer UX:** 
+  - 페이지 이동 없는 SPA(Single Page Application) 방식 탐색
+  - 더블 클릭으로 폴더 진입 및 파일 다운로드
+  - 브레드크럼을 이용한 빠른 경로 이동
+- **Root:** `/Volumes` (맥에 연결된 모든 외장 드라이브 접근 가능)
 
-## 핵심 구성
-
-1. **Jellyfin (미디어 서버)**
-    - macOS 네이티브용 바이너리 사용 → 도커/VM보다 램 점유 최소화
-    - 비디오, 음원 등 미디어 스트리밍
-
-2. **FileBrowser (웹 파일 관리자)**
-    - 단일 실행 파일 (Go 기반, 극저점유)
-    - 브라우저 기반 웹 파일 관리
-
-3. **Tailscale/SFTP**
-    - 외부 접속은 Tailscale / 내부 연결은 macOS 기본 SFTP 서버로 처리
-    - 별도의 포트포워딩 필요 없음 (MagicDNS 활용)
-
-4. **자동화 스크립트**
-    - 서버 온/오프/상태점검 스크립트 제공 (추가 예정)
+### 3. Jellyfin
+- **Native App:** macOS 전용 바이너리 구동으로 하드웨어 가속 트랜스코딩 지원
 
 ---
 
-## 설치 및 세팅
+## 설치 및 실행
 
-1. Homebrew 설치 및 도구 설치
-    ```sh
-    brew install --cask jellyfin
-    brew install filebrowser
-    ```
-2. Jellyfin.app 실행 (응용프로그램에서 실행 가능)
-3. filebrowser 실행: `/opt/homebrew/bin/filebrowser -r /Volumes/ROGALLY/`
-4. Tailscale 및 SFTP는 macOS 시스템 환경설정에서 활성화
+### 1. 바이너리 빌드
+M4 Mac mini(Apple Silicon) 환경에 최적화된 바이너리를 생성하려면 아래 명령어를 실행한다:
+```sh
+# 현재 디렉토리에서 Go 소스를 빌드
+GOOS=darwin GOARCH=arm64 go build -o mistvault_storage_server main.go
+
+# 실행 권한 부여
+chmod +x mistvault_storage_server
+```
+
+### 2. 서비스 실행
+- **수동 실행:** `./mistvault_storage_server`
+- **자동 실행:** `com.mistyclawn.mistvault.dashboard.plist`를 LaunchAgent에 등록하면 대시보드가 스토리지 서버를 자동으로 감시하고 실행함.
+
+---
+
+## 📂 프로젝트 구조
+- `main.go`: 스토리지 서버 소스 (Go)
+- `dashboard.js`: 게이트웨이 대시보드 (Node.js)
+- `guard.sh`: 볼륨 마운트 및 서비스 체크 스크립트
+- `mistvault_storage_server`: 빌드된 바이너리
 
 ---
 
 ## 앞으로 할 일 (TODO)
-- [ ] Jellyfin 기본 설정/미디어 라이브러리 경로 잡기
-- [ ] FileBrowser 설정 파일 및 접속 계정 암호화
-- [ ] 자동화 스크립트 (서버 시작/중지/상태) 추가
-- [ ] 상세 세팅 및 문서화 계속 보강
+- [ ] YTDLP 이식: 대시보드 내 원격 다운로드 인터페이스 추가
+- [ ] 보안 강화: 대시보드 및 스토리지 접근 시 비밀번호/토큰 인증 레이어 추가
+- [ ] 로그 뷰어: 대시보드에서 시스템 로그 직접 확인 기능
