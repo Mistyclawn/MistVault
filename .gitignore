@@ -15,3 +15,4 @@ mistvault_storage_server_old
 node_modules/
 npm-debug.log*
 mistvault_storage_server
+mistvault_settings.json
