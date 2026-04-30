@@ -955,11 +955,20 @@ func apiSaveHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 
-const settingsFile = "mistvault_settings.json"
+var settingsPath string
+
+func init() {
+	execPath, err := os.Executable()
+	if err != nil {
+		settingsPath = "mistvault_settings.json"
+	} else {
+		settingsPath = filepath.Join(filepath.Dir(execPath), "mistvault_settings.json")
+	}
+}
 
 func apiSettingsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		data, err := os.ReadFile(settingsFile)
+		data, err := os.ReadFile(settingsPath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				w.Header().Set("Content-Type", "application/json")
@@ -977,7 +986,7 @@ func apiSettingsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := os.WriteFile(settingsFile, body, 0644); err != nil {
+		if err := os.WriteFile(settingsPath, body, 0644); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
