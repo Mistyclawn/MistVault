@@ -3,33 +3,36 @@
 # MistVault Storage & Service Guard
 # /Volumes/ROGALLY/github/MistVault/guard.sh
 
-TARGET_VOLUME="/Volumes/ROGALLY"
-VAULT_PATH="$TARGET_VOLUME/github/MistVault"
+TARGET_VOLUMES=("/Volumes/ROGALLY" "/Volumes/DATA_EXT") # 여기에 추가 볼륨 경로 나열
+VAULT_PATH="/Volumes/ROGALLY/github/MistVault"
 FB_BIN="/opt/homebrew/bin/filebrowser"
 LOG_FILE="$VAULT_PATH/vault_guard.log"
 
 echo "[$(date)] Guard check started..." >> "$LOG_FILE"
 
-# 1. 마운트 상태 확인
-if [ ! -d "$TARGET_VOLUME" ]; then
-    echo "❌ [ERROR] $TARGET_VOLUME 이 마운트되지 않았습니다!" >> "$LOG_FILE"
-    # 여기서 알림(osascript 등)을 보낼 수도 있음
+# 1. 멀티 볼륨 마운트 및 식별 체크
+VALID_VOLUMES=()
+for vol in "${TARGET_VOLUMES[@]}"; do
+    if [ -d "$vol" ]; then
+        echo "✅ Detected: $vol" >> "$LOG_FILE"
+        VALID_VOLUMES+=("$vol")
+    else
+        echo "❌ Missing: $vol" >> "$LOG_FILE"
+    fi
+done
+
+if [ ${#VALID_VOLUMES[@]} -eq 0 ]; then
+    echo "🚨 [CRITICAL] 접근 가능한 볼륨이 하나도 없습니다!" >> "$LOG_FILE"
     exit 1
 fi
 
-# 2. 다른 드라이브 오인 방지 (특정 파일 존재 여부 확인)
-if [ ! -f "$VAULT_PATH/README.md" ]; then
-    echo "⚠️ [WARN] 드라이브는 마운트되었으나 MistVault 경로를 찾을 수 없습니다. 다른 드라이브일 가능성이 있습니다." >> "$LOG_FILE"
-    exit 1
-fi
-
-echo "✅ Storage OK: $TARGET_VOLUME" >> "$LOG_FILE"
-
-# 3. 서비스 상태 확인 및 필요시 재시작 (예: FileBrowser)
+# 2. FileBrowser 실행 (모든 유효 볼륨의 상위인 /Volumes를 루트로 잡거나 개별 설정)
+# 여기서는 /Volumes를 루트로 하되, 특정 볼륨들만 보이게 하려면 설정을 더 꼬아야 하지만
+# 가장 심플하게 /Volumes 전체를 보여주되 위에서 체크한 볼륨들이 있는지 확인하는 식.
 if ! pgrep -x "filebrowser" > /dev/null; then
-    echo "🚀 Restarting FileBrowser..." >> "$LOG_FILE"
-    # 백그라운드 실행 (로그는 별도 관리)
-    nohup "$FB_BIN" -r "$TARGET_VOLUME" -p 8080 -a 0.0.0.0 > "$VAULT_PATH/filebrowser.log" 2>&1 &
+    echo "🚀 Restarting FileBrowser (Root: /Volumes)..." >> "$LOG_FILE"
+    # /Volumes를 루트로 잡으면 연결된 모든 하드에 접근 가능해짐
+    nohup "$FB_BIN" -r "/Volumes" -p 8080 -a 0.0.0.0 > "$VAULT_PATH/filebrowser.log" 2>&1 &
 fi
 
 # 4. Jellyfin은 macOS App 형태이므로 실행 여부만 체크
