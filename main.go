@@ -260,7 +260,14 @@ const htmlTemplate = `<!DOCTYPE html>
             renderFiles(currentFilesData);
         }
         let clipboard = null;
-        let favorites = JSON.parse(localStorage.getItem('mistvault_favorites') || '[]');
+        let favorites = [];
+        try {
+            favorites = JSON.parse(localStorage.getItem('mistvault_favorites') || '[]');
+            if (!Array.isArray(favorites)) favorites = [];
+        } catch(e) {
+            favorites = [];
+            localStorage.setItem('mistvault_favorites', '[]');
+        }
 
         const fileList = document.getElementById('file-list');
         const breadcrumb = document.getElementById('breadcrumb');
@@ -926,6 +933,9 @@ func main() {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
 		fmt.Fprint(w, htmlTemplate)
 	})
 
