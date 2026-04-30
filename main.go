@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 )
 
 type FileInfo struct {
@@ -68,7 +70,8 @@ const htmlTemplate = `<!DOCTYPE html>
             --text: #e8eaed; --text-dim: #9aa0a6; --border: #5f6368; --hover: #3c4043; --selected: #3b4252;
         }
         
-        body { font-family: "Segoe UI", Roboto, "Helvetica Neue", sans-serif; background: var(--bg); color: var(--text); padding: 0; margin: 0; overflow: hidden; transition: background 0.3s, color 0.3s; }
+        body { font-family: "Segoe UI", Roboto, "Helvetica Neue", sans-serif; background: var(--bg); color: var(--text); padding: 0; margin: 0; overflow: hidden; transition: background 0.3s, color 0.3s; user-select: none; -webkit-user-select: none; }
+        input, textarea { user-select: text !important; -webkit-user-select: text !important; }
         .app-container { display: flex; height: 100vh; flex-direction: column; }
         
         header { background: var(--surface); padding: 10px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; height: 48px;}
@@ -994,12 +997,19 @@ const htmlTemplate = `<!DOCTYPE html>
             return s + 's';
         }
 
-        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dragOverlay.style.display = 'flex'; });
+        dropZone.addEventListener('dragover', (e) => { 
+            if (e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
+                e.preventDefault(); 
+                dragOverlay.style.display = 'flex'; 
+            }
+        });
         dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); dragOverlay.style.display = 'none'; });
         dropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dragOverlay.style.display = 'none';
-            handleUpload(e);
+            if (e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
+                e.preventDefault();
+                dragOverlay.style.display = 'none';
+                handleUpload(e);
+            }
         });
 
         const modal = document.getElementById('file-modal');
@@ -1362,15 +1372,43 @@ func apiCopyHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+var (
+	sizeCache      = make(map[string]int64)
+	sizeCacheTime  = make(map[string]time.Time)
+	sizeCacheMutex sync.RWMutex
+)
+
 func getDirSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+
+	sizeCacheMutex.RLock()
+	cachedSize, exists := sizeCache[path]
+	cachedTime, timeExists := sizeCacheTime[path]
+	sizeCacheMutex.RUnlock()
+
+	if exists && timeExists && info.ModTime().Equal(cachedTime) {
+		return cachedSize
+	}
+
 	var size int64
 	filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
-		if err != nil { return nil }
+		if err != nil {
+			return nil
+		}
 		if !info.IsDir() {
 			size += info.Size()
 		}
 		return nil
 	})
+
+	sizeCacheMutex.Lock()
+	sizeCache[path] = size
+	sizeCacheTime[path] = info.ModTime()
+	sizeCacheMutex.Unlock()
+
 	return size
 }
 
