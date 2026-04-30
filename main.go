@@ -117,7 +117,7 @@ const htmlTemplate = `<!DOCTYPE html>
         tr.selected td { background: var(--selected); }
         
         .name-cell { display: flex; align-items: center; overflow: hidden; }
-        .name-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .name-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: none; -webkit-user-select: none; }
         .icon { width: 24px; font-size: 1.2rem; display: inline-flex; align-items: center; justify-content: center; margin-right: 16px; flex-shrink: 0; }
         .folder-icon { color: var(--primary); }
         .file-icon { color: var(--secondary); }
@@ -205,6 +205,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 <span>☁️</span> MistVault Explorer
             </div>
             <div style="display:flex; gap: 12px; align-items: center;">
+                <span id="ping-display" style="font-size: 0.8rem; color: var(--text-dim); margin-right: 12px; font-family: monospace;">Ping: -- ms</span>
                 <button class="btn" id="theme-btn" onclick="toggleTheme()">🌙 Dark</button>
                 <input type="file" id="upload-input" style="display:none" multiple onchange="handleUpload(event)">
                 <button class="btn primary" onclick="document.getElementById('upload-input').click()"><i>⬆️</i> Upload</button>
@@ -233,7 +234,7 @@ const htmlTemplate = `<!DOCTYPE html>
                     <div style="display: flex; flex-grow: 1; align-items: center; border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; background: var(--bg); overflow: hidden; min-width: 0;">
                         <div id="breadcrumb" class="breadcrumb" style="flex-grow: 1; min-width: 0;"></div>
                         <input type="text" id="path-input" style="display: none; width: 100%; background: transparent; border: none; color: var(--text); outline: none; font-size: 1rem;" onkeydown="handlePathInput(event)">
-                        <button class="action-btn" onclick="editPath()" title="Edit Path" style="margin-left: 8px;">✏️</button>
+                        <button class="action-btn" id="edit-path-btn" onclick="editPath()" title="Edit Path" style="margin-left: 8px;">✏️</button>
                         <button class="action-btn" onclick="copyCurrentPath()" title="Copy Path" style="margin-left: 4px;">📋</button>
                     </div>
                     <button class="btn" onclick="createFolder()">📁 New Folder</button>
@@ -439,10 +440,16 @@ const htmlTemplate = `<!DOCTYPE html>
         function editPath() {
             const bc = document.getElementById('breadcrumb');
             const input = document.getElementById('path-input');
-            bc.style.display = 'none';
-            input.style.display = 'block';
-            input.value = currentPath;
-            input.focus();
+            const isEditing = input.style.display === 'block';
+            
+            if (isEditing) {
+                cancelPathEdit();
+            } else {
+                bc.style.display = 'none';
+                input.style.display = 'block';
+                input.value = currentPath;
+                input.focus();
+            }
         }
 
         function handlePathInput(e) {
@@ -588,6 +595,13 @@ const htmlTemplate = `<!DOCTYPE html>
                 const nameSpan = document.createElement('span');
                 nameSpan.className = 'name-text';
                 nameSpan.textContent = file.name;
+                nameSpan.style.userSelect = 'none';
+                nameSpan.style.cursor = 'pointer';
+                nameSpan.onclick = (e) => {
+                    e.stopPropagation();
+                    if (file.isDir) loadPath(file.path, true);
+                    else showModal(file);
+                };
                 nameDiv.appendChild(iconSpan);
                 nameDiv.appendChild(nameSpan);
                 tdName.appendChild(nameDiv);
@@ -916,12 +930,23 @@ const htmlTemplate = `<!DOCTYPE html>
             };
 
             xhr.onload = () => {
+                const item = document.getElementById('upload-' + uploadId);
+                if (item) {
+                    item.classList.add('completed');
+                    const meta = item.querySelector('.upload-item-meta');
+                    if (meta) {
+                        meta.innerHTML = '<span style="color: var(--primary); font-weight: bold;">✓ Completed</span>' +
+                                       '<span style="cursor: pointer; background: var(--hover); padding: 2px 6px; border-radius: 4px;" onclick="this.closest(\'.upload-item\').remove(); updateUploadSummary();">Clear</span>';
+                    }
+                    const pb = item.querySelector('.upload-progress-bar');
+                    if (pb) pb.style.width = '100%';
+                    const cancelBtn = item.querySelector('.upload-cancel-btn');
+                    if (cancelBtn) cancelBtn.style.display = 'none';
+                }
                 delete activeUploads[uploadId];
-                document.getElementById('upload-' + uploadId).remove();
                 updateUploadSummary();
                 if (Object.keys(activeUploads).length === 0) {
                     loadPath(currentPath, false);
-                    setTimeout(() => { document.getElementById('upload-manager').style.display = 'none'; }, 2000);
                 }
             };
             
@@ -1027,6 +1052,20 @@ const htmlTemplate = `<!DOCTYPE html>
         }
         function closeModal() { modal.style.display = 'none'; }
         
+        function checkPing() {
+            const start = Date.now();
+            fetch('/api/ping')
+                .then(() => {
+                    const latency = Date.now() - start;
+                    document.getElementById('ping-display').textContent = 'Ping: ' + latency + ' ms';
+                })
+                .catch(() => {
+                    document.getElementById('ping-display').textContent = 'Ping: Error';
+                });
+        }
+        setInterval(checkPing, 5000);
+        checkPing();
+
         loadSettings();
         loadPath(new URLSearchParams(window.location.search).get('path') || '/', false);
     </script>
@@ -1050,11 +1089,15 @@ func apiListHandler(w http.ResponseWriter, r *http.Request) {
 	var files []FileInfo
 	for _, entry := range entries {
 		info, _ := entry.Info()
+		size := info.Size()
+		if entry.IsDir() {
+			size = getDirSize(filepath.Join(fullPath, entry.Name()))
+		}
 		files = append(files, FileInfo{
 			Name:       entry.Name(),
 			IsDir:      entry.IsDir(),
-			Size:       formatSize(info.Size()),
-			SizeBytes:  info.Size(),
+			Size:       formatSize(size),
+			SizeBytes:  size,
 			ModTime:    info.ModTime().Format("2006-01-02 15:04"),
 			ModTimeRaw: info.ModTime().Unix(),
 			Path:       filepath.Join(reqPath, entry.Name()),
@@ -1312,6 +1355,18 @@ func apiCopyHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func getDirSize(path string) int64 {
+	var size int64
+	filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err != nil { return nil }
+		if !info.IsDir() {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size
+}
+
 func apiStorageHandler(w http.ResponseWriter, r *http.Request) {
 	entries, err := os.ReadDir(rootDir)
 	if err != nil {
@@ -1386,6 +1441,9 @@ func main() {
 	http.HandleFunc("/api/settings", apiSettingsHandler)
 	http.HandleFunc("/api/save", apiSaveHandler)
 	http.HandleFunc("/api/storage", apiStorageHandler)
+	http.HandleFunc("/api/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 
 	log.Printf("👻 MistVault Explorer starting on port %s...\n", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
