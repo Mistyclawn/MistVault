@@ -273,14 +273,7 @@ const htmlTemplate = `<!DOCTYPE html>
             renderFiles(currentFilesData);
         }
         let clipboard = null;
-        let favorites = [];
-        try {
-            favorites = JSON.parse(localStorage.getItem('mistvault_favorites') || '[]');
-            if (!Array.isArray(favorites)) favorites = [];
-        } catch(e) {
-            favorites = [];
-            localStorage.setItem('mistvault_favorites', '[]');
-        }
+        
 
         const fileList = document.getElementById('file-list');
         const breadcrumb = document.getElementById('breadcrumb');
@@ -292,16 +285,50 @@ const htmlTemplate = `<!DOCTYPE html>
         const dropZone = document.getElementById('drop-zone');
         const dragOverlay = document.getElementById('drag-overlay');
 
-        // Theme initialization
-        const savedTheme = localStorage.getItem('mistvault_theme');
-        if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-            document.body.classList.add('dark-theme');
-            document.getElementById('theme-btn').textContent = '☀️ Light';
+        
+        let favorites = [];
+        let currentTheme = '';
+        
+        async function loadSettings() {
+            try {
+                const res = await fetch('/api/settings');
+                const data = await res.json();
+                favorites = data.favorites || [];
+                currentTheme = data.theme || '';
+                
+                if (currentTheme === 'dark' || (!currentTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                    document.body.classList.add('dark-theme');
+                    document.getElementById('theme-btn').textContent = '☀️ Light';
+                } else {
+                    document.body.classList.remove('dark-theme');
+                    document.getElementById('theme-btn').textContent = '🌙 Dark';
+                }
+                
+                renderFavorites();
+                updateFavButton();
+            } catch (e) {
+                console.error("Failed to load settings", e);
+            }
         }
+        
+        async function saveSettingsToServer() {
+            try {
+                await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ theme: currentTheme, favorites: favorites })
+                });
+            } catch (e) {
+                console.error("Failed to save settings", e);
+            }
+        }
+        
+        loadSettings();
+
 
         function toggleTheme() {
             const isDark = document.body.classList.toggle('dark-theme');
-            localStorage.setItem('mistvault_theme', isDark ? 'dark' : 'light');
+            currentTheme = isDark ? 'dark' : 'light'; saveSettingsToServer();
             document.getElementById('theme-btn').textContent = isDark ? '☀️ Light' : '🌙 Dark';
         }
 
@@ -519,7 +546,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 const name = currentPath.split('/').pop() || currentPath;
                 favorites.push({ name, path: currentPath });
             }
-            localStorage.setItem('mistvault_favorites', JSON.stringify(favorites));
+            saveSettingsToServer();
             renderFavorites();
             updateFavButton();
         }
@@ -533,7 +560,7 @@ const htmlTemplate = `<!DOCTYPE html>
                 div.querySelector('.remove-fav').onclick = (e) => {
                     e.stopPropagation();
                     favorites.splice(idx, 1);
-                    localStorage.setItem('mistvault_favorites', JSON.stringify(favorites));
+                    saveSettingsToServer();
                     renderFavorites();
                     updateFavButton();
                 };
@@ -628,22 +655,67 @@ const htmlTemplate = `<!DOCTYPE html>
             }
         }
 
-        async function createFolder() {
-            const name = prompt("새 폴더 이름:");
-            if (!name) return;
-            const newPath = currentPath === '/' ? '/' + name : currentPath + '/' + name;
-            loading.style.display = 'flex';
-            try {
-                await fetch('/api/mkdir', { 
-                    method: 'POST', 
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ path: newPath }) 
-                });
-                loadPath(currentPath, false);
-            } catch(e) {
-                alert('폴더 생성 실패');
-                loading.style.display = 'none';
+        function createFolder() {
+            if (document.getElementById('new-folder-input')) {
+                document.getElementById('new-folder-input').focus();
+                return;
             }
+            
+            const tr = document.createElement('tr');
+            
+            const tdName = document.createElement('td');
+            const nameDiv = document.createElement('div');
+            nameDiv.className = 'name-cell';
+            nameDiv.innerHTML = '<span class="icon folder-icon">📁</span><input type="text" id="new-folder-input" placeholder="새 폴더 이름" style="flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--primary); outline: none; border-radius: 4px; padding: 4px 8px;" />';
+            tdName.appendChild(nameDiv);
+            
+            const tdSize = document.createElement('td'); tdSize.className = 'col-size';
+            const tdTime = document.createElement('td'); tdTime.className = 'col-time';
+            const tdActions = document.createElement('td'); tdActions.className = 'col-actions';
+            
+            tdActions.innerHTML = '<button class="action-btn" title="Create" id="new-folder-save">✅</button><button class="action-btn" title="Cancel" id="new-folder-cancel">❌</button>';
+            
+            tr.appendChild(tdName);
+            tr.appendChild(tdSize);
+            tr.appendChild(tdTime);
+            tr.appendChild(tdActions);
+            
+            fileList.insertBefore(tr, fileList.firstChild);
+            
+            const input = document.getElementById('new-folder-input');
+            input.focus();
+            
+            const submit = async () => {
+                const name = input.value.trim();
+                if (!name) { cancel(); return; }
+                const newPath = currentPath === '/' ? '/' + name : currentPath + '/' + name;
+                loading.style.display = 'flex';
+                try {
+                    const res = await fetch('/api/mkdir', { 
+                        method: 'POST', 
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ path: newPath }) 
+                    });
+                    if (!res.ok) throw new Error('생성 실패');
+                    setTimeout(() => {
+                        loadPath(currentPath, false);
+                    }, 100);
+                } catch(e) {
+                    alert('폴더 생성 실패');
+                    loading.style.display = 'none';
+                }
+            };
+            
+            const cancel = () => {
+                if (tr.parentNode) tr.parentNode.removeChild(tr);
+            };
+            
+            input.onkeydown = (e) => {
+                if (e.key === 'Enter') submit();
+                if (e.key === 'Escape') cancel();
+            };
+            document.getElementById('new-folder-save').onclick = submit;
+            document.getElementById('new-folder-cancel').onclick = cancel;
         }
 
         // Upload
@@ -882,6 +954,39 @@ func apiSaveHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+
+const settingsFile = "mistvault_settings.json"
+
+func apiSettingsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		data, err := os.ReadFile(settingsFile)
+		if err != nil {
+			if os.IsNotExist(err) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(`{"theme":"","favorites":[]}`))
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
+	} else if r.Method == http.MethodPost {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := os.WriteFile(settingsFile, body, 0644); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	} else {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func apiMkdirHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1012,6 +1117,7 @@ func main() {
 	http.HandleFunc("/api/move", apiRenameHandler)
 	http.HandleFunc("/api/copy", apiCopyHandler)
 	http.HandleFunc("/api/mkdir", apiMkdirHandler)
+	http.HandleFunc("/api/settings", apiSettingsHandler)
 	http.HandleFunc("/api/save", apiSaveHandler)
 
 	log.Printf("👻 MistVault Explorer starting on port %s...\n", port)

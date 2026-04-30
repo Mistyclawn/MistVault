@@ -25,11 +25,18 @@ MistVault는 MistyClawn을 위해 설계된, M4 맥 미니 전용 저전력 원�
 - **UI:** 모던 다크 테마 기반의 반응형 게이트웨이
 
 ### 2. MistVault Storage (main.go -> mistvault_storage_server)
-- **M4 Native:** Go 언어로 빌드되어 극도로 낮은 메모리 점유율 보장
-- **Explorer UX:** 
-  - 페이지 이동 없는 SPA(Single Page Application) 방식 탐색
-  - 더블 클릭으로 폴더 진입 및 파일 다운로드
-  - 브레드크럼을 이용한 빠른 경로 이동
+- **M4 Native & SPA:** Go 네이티브 런타임과 완벽한 SPA 기반 웹 탐색기 (데스크탑/모바일 반응형)
+- **Explorer UX (Full Stack Features):** 
+  - History API를 활용한 페이지 이동 없는 부드러운 SPA 구조
+  - 테이블 컬럼별 오름차순/내림차순 정렬 (이름, 크기, 수정일시)
+  - 우클릭 컨텍스트 메뉴를 통한 직관적인 파일 관리 (복사, 잘라내기, 삭제, 다운로드)
+  - 인라인 새 폴더 생성(브라우저 팝업 제거) 및 드래그 앤 드롭 파일 업로드
+  - 텍스트 직접 입력 및 클립보드 복사(📋)가 가능한 브레드크럼(Breadcrumb) 경로창
+  - 사이드바 접기/펼치기 기능 및 서버 설정 기반 즐겨찾기(Favorites) 관리
+- **Media & Text Preview:** 
+  - 모달 팝업 내장 미디어 플레이어 (`.mp4`, `.webm`, `.ts`, `.webp`, `.jpg`, `.mp3` 등 이미지/비디오/오디오 스트리밍)
+  - 모달 팝업 내장 텍스트 에디터 (`.txt`, `.md`, `.js`, `.go` 등 더블 클릭하여 내용을 수정하고 서버 원본에 덮어쓰기 저장)
+- **Cross-device Sync:** 테마(다크/라이트 모드) 및 즐겨찾기 리스트를 백엔드(`mistvault_settings.json`)에 중앙 집중 저장하여 여러 기기에서 동일한 사용자 경험 제공
 - **Root:** `/Volumes` (맥에 연결된 모든 외장 드라이브 접근 가능)
 
 ### 3. Jellyfin
