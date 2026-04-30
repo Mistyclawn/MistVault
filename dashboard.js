@@ -1,5 +1,7 @@
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import http from 'http';
+import path from 'path';
+import fs from 'fs';
 
 /**
  * MistVault Gateway Dashboard
@@ -7,6 +9,31 @@ import http from 'http';
  */
 
 const PORT = 8088;
+const STORAGE_SERVER_PATH = '/Volumes/ROGALLY/github/MistVault/mistvault_storage_server';
+
+// 스토리지 서버가 죽어있으면 자동으로 살려주는 함수
+const ensureStorageServer = () => {
+    try {
+        execSync('pgrep -f mistvault_storage_server');
+    } catch (e) {
+        console.log('🚀 Storage server is down. Restarting...');
+        if (fs.existsSync(STORAGE_SERVER_PATH)) {
+            const out = fs.openSync('/tmp/mistvault_storage_out.log', 'a');
+            const err = fs.openSync('/tmp/mistvault_storage_err.log', 'a');
+            
+            spawn(STORAGE_SERVER_PATH, [], {
+                detached: true,
+                stdio: [ 'ignore', out, err ]
+            }).unref();
+        } else {
+            console.error('❌ Storage server binary not found at:', STORAGE_SERVER_PATH);
+        }
+    }
+};
+
+// 10초마다 스토리지 서버 상태 체크
+setInterval(ensureStorageServer, 10000);
+ensureStorageServer();
 
 const getTailscaleIP = () => {
     try {
