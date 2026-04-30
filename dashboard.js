@@ -31,27 +31,19 @@ const getListeningPorts = () => {
 
 const getTailscaleIP = () => {
     try {
+        // ifconfig에서 100.으로 시작하는 inet 주소를 직접 추출
+        const ip = execSync("ifconfig | grep 'inet 100.' | awk '{print $2}'").toString().trim();
+        if (ip && ip.startsWith('100.')) {
+            return ip;
+        }
+        
+        // 위 방법이 실패하면 기존 os 모듈 방식 (백업)
         const { networkInterfaces } = require('os');
         const nets = networkInterfaces();
         for (const name of Object.keys(nets)) {
             for (const net of nets[name]) {
-                // Tailscale IPv4는 항상 100.으로 시작함
-                if (net.family === 'IPv4' && net.address.startsWith('100.')) {
-                    return net.address;
-                }
+                if (net.address.startsWith('100.')) return net.address;
             }
-        }
-        // 인터페이스에서 못 찾으면 명령어 시도 (경로 다양화)
-        const paths = [
-            'tailscale',
-            '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
-            '/opt/homebrew/bin/tailscale',
-            '/usr/local/bin/tailscale'
-        ];
-        for (const p of paths) {
-            try {
-                return execSync(`${p} ip -4`).toString().trim();
-            } catch (e) { continue; }
         }
         return "localhost";
     } catch (e) {
