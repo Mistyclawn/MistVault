@@ -64,6 +64,7 @@ const getListeningPorts = () => {
         const coreServices = [
             { name: "🎬 Jellyfin (Media)", port: "8096" },
             { name: "📂 MistVault Storage", port: "8097" },
+            { name: "⚔️ Veradom Codex", port: "8099" },
             { name: "👻 MistVault Gateway", port: "8088" }
         ];
 
