@@ -1,4 +1,4 @@
-import { execSync, spawn } from 'child_process';
+import { execSync, execFileSync, spawn } from 'child_process';
 import http from 'http';
 import path from 'path';
 import fs from 'fs';
@@ -48,6 +48,66 @@ const serveLolManager = (req, res) => {
         'Cache-Control': 'no-store'
     });
     fs.createReadStream(filePath).pipe(res);
+};
+
+const readLolManagerContext = () => ({
+    index: JSON.parse(fs.readFileSync(path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_index.json'), 'utf8')),
+    snapshot: JSON.parse(fs.readFileSync(path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_snapshot.json'), 'utf8'))
+});
+
+const sendJson = (res, status, payload) => {
+    res.writeHead(status, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store'
+    });
+    res.end(JSON.stringify(payload));
+};
+
+const readRequestJson = (req) => new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', chunk => {
+        body += chunk;
+        if (body.length > 1024 * 64) reject(new Error('request too large'));
+    });
+    req.on('end', () => {
+        try {
+            resolve(body ? JSON.parse(body) : {});
+        } catch (err) {
+            reject(err);
+        }
+    });
+    req.on('error', reject);
+});
+
+const generateLolManagerContext = ({ startYear, team, entryPhase }) => {
+    const year = Number(startYear);
+    if (!Number.isInteger(year) || year < 2010 || year > 2035) throw new Error('invalid startYear');
+    if (!team || String(team).length > 80) throw new Error('invalid team');
+    const phase = entryPhase || 'offseason';
+    const current = readLolManagerContext();
+    const currentTeam = current.snapshot?.team || {};
+    if (
+        Number(current.snapshot?.start_year) === year &&
+        String(current.snapshot?.entry_phase || 'offseason') === String(phase) &&
+        [currentTeam.display_name, currentTeam.canonical_display_name].includes(String(team))
+    ) {
+        return current;
+    }
+
+    const repoRoot = '/Volumes/ROGALLY/github/LOLManager';
+    execFileSync('python3', [
+        'data_pipeline_v2/scripts/export_fresh_start_game_index.py',
+        '--export',
+        path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_index.json')
+    ], { cwd: repoRoot, stdio: 'pipe' });
+    execFileSync('python3', [
+        'data_pipeline_v2/scripts/export_fresh_start_game_snapshot.py',
+        '--team', String(team),
+        '--start-year', String(year),
+        '--entry-phase', String(phase),
+        '--export', path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_snapshot.json')
+    ], { cwd: repoRoot, stdio: 'pipe' });
+    return readLolManagerContext();
 };
 
 // 스토리지 서버가 죽어있으면 자동으로 살려주는 함수
@@ -118,6 +178,22 @@ const getListeningPorts = () => {
 };
 
 const server = http.createServer((req, res) => {
+    if (req.url === '/lolmanager/api/context' && req.method === 'GET') {
+        try {
+            sendJson(res, 200, readLolManagerContext());
+        } catch (err) {
+            sendJson(res, 500, { error: err.message });
+        }
+        return;
+    }
+
+    if (req.url === '/lolmanager/api/generate' && req.method === 'POST') {
+        readRequestJson(req)
+            .then(payload => sendJson(res, 200, generateLolManagerContext(payload)))
+            .catch(err => sendJson(res, 400, { error: err.message }));
+        return;
+    }
+
     if (req.url === '/lolmanager' || req.url.startsWith('/lolmanager/')) {
         serveLolManager(req, res);
         return;
