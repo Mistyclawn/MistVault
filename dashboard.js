@@ -55,6 +55,16 @@ const readLolManagerContext = () => ({
     snapshot: JSON.parse(fs.readFileSync(path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_snapshot.json'), 'utf8'))
 });
 
+const exportLolManagerIndex = () => {
+    const repoRoot = '/Volumes/ROGALLY/github/LOLManager';
+    execFileSync('python3', [
+        'data_pipeline_v2/scripts/export_fresh_start_game_index.py',
+        '--export',
+        path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_index.json')
+    ], { cwd: repoRoot, stdio: 'pipe' });
+    return JSON.parse(fs.readFileSync(path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_index.json'), 'utf8'));
+};
+
 const sendJson = (res, status, payload) => {
     res.writeHead(status, {
         'Content-Type': 'application/json; charset=utf-8',
@@ -95,11 +105,7 @@ const generateLolManagerContext = ({ startYear, team, entryPhase }) => {
     }
 
     const repoRoot = '/Volumes/ROGALLY/github/LOLManager';
-    execFileSync('python3', [
-        'data_pipeline_v2/scripts/export_fresh_start_game_index.py',
-        '--export',
-        path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_index.json')
-    ], { cwd: repoRoot, stdio: 'pipe' });
+    exportLolManagerIndex();
     execFileSync('python3', [
         'data_pipeline_v2/scripts/export_fresh_start_game_snapshot.py',
         '--team', String(team),
@@ -178,6 +184,15 @@ const getListeningPorts = () => {
 };
 
 const server = http.createServer((req, res) => {
+    if (req.url === '/lolmanager/api/index' && req.method === 'GET') {
+        try {
+            sendJson(res, 200, exportLolManagerIndex());
+        } catch (err) {
+            sendJson(res, 500, { error: err.message });
+        }
+        return;
+    }
+
     if (req.url === '/lolmanager/api/context' && req.method === 'GET') {
         try {
             sendJson(res, 200, readLolManagerContext());
