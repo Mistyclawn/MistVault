@@ -1,4 +1,5 @@
 import { execSync, execFileSync, spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import http from 'http';
 import path from 'path';
 import fs from 'fs';
@@ -72,6 +73,136 @@ const sendJson = (res, status, payload) => {
     });
     res.end(JSON.stringify(payload));
 };
+
+const freshStartJobs = new Map();
+
+const readProgressFile = (progressFile) => {
+    try {
+        return JSON.parse(fs.readFileSync(progressFile, 'utf8'));
+    } catch (_) {
+        return null;
+    }
+};
+
+const startLolManagerGenerationJob = ({ startYear, team, entryPhase }) => {
+    const year = Number(startYear);
+    if (!Number.isInteger(year) || year < 2010 || year > 2035) throw new Error('invalid startYear');
+    if (!team || String(team).length > 80) throw new Error('invalid team');
+    const phase = entryPhase || 'offseason';
+    const id = randomUUID();
+    const repoRoot = '/Volumes/ROGALLY/github/LOLManager';
+    const progressFile = path.join('/tmp', `lolmanager-fresh-start-${id}.progress.json`);
+    const stdoutFile = path.join('/tmp', `lolmanager-fresh-start-${id}.out.log`);
+    const stderrFile = path.join('/tmp', `lolmanager-fresh-start-${id}.err.log`);
+    const startedAt = Date.now();
+
+    const current = readLolManagerContext();
+    const currentTeam = current.snapshot?.team || {};
+    if (
+        Number(current.snapshot?.start_year) === year &&
+        String(current.snapshot?.entry_phase || 'offseason') === String(phase) &&
+        [currentTeam.display_name, currentTeam.canonical_display_name].includes(String(team))
+    ) {
+        const job = {
+            id,
+            status: 'done',
+            startedAt,
+            finishedAt: Date.now(),
+            target: { startYear: year, team: String(team), entryPhase: String(phase) },
+            progressFile,
+            stdoutFile,
+            stderrFile,
+            progress: { status: 'done', stage: 'already_current', pct: 100, detail: 'Current snapshot already matches requested Fresh Start.' },
+            result: current
+        };
+        freshStartJobs.set(id, job);
+        return job;
+    }
+
+    exportLolManagerIndex();
+    fs.writeFileSync(progressFile, JSON.stringify({
+        schema_version: 'fresh_start_generation_progress_v0',
+        status: 'running',
+        stage: 'spawn_exporter',
+        pct: 0,
+        detail: `${team} ${year} ${phase} snapshot exporter spawned`,
+        updated_at: new Date().toISOString()
+    }, null, 2));
+
+    const out = fs.openSync(stdoutFile, 'w');
+    const err = fs.openSync(stderrFile, 'w');
+    const child = spawn('python3', [
+        'data_pipeline_v2/scripts/export_fresh_start_game_snapshot.py',
+        '--team', String(team),
+        '--start-year', String(year),
+        '--entry-phase', String(phase),
+        '--export', path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_snapshot.json'),
+        '--progress-file', progressFile
+    ], { cwd: repoRoot, stdio: ['ignore', out, err] });
+
+    const job = {
+        id,
+        status: 'running',
+        startedAt,
+        finishedAt: null,
+        target: { startYear: year, team: String(team), entryPhase: String(phase) },
+        progressFile,
+        stdoutFile,
+        stderrFile,
+        pid: child.pid,
+        result: null,
+        error: null
+    };
+    freshStartJobs.set(id, job);
+
+    child.on('close', (code, signal) => {
+        job.finishedAt = Date.now();
+        if (code === 0) {
+            job.status = 'done';
+            job.result = readLolManagerContext();
+        } else {
+            job.status = 'error';
+            job.error = `Fresh Start exporter failed code=${code} signal=${signal || ''}`.trim();
+        }
+        try { fs.closeSync(out); } catch (_) {}
+        try { fs.closeSync(err); } catch (_) {}
+    });
+    child.on('error', (errObj) => {
+        job.finishedAt = Date.now();
+        job.status = 'error';
+        job.error = errObj.message;
+    });
+    return job;
+};
+
+const freshStartJobStatus = (id) => {
+    const job = freshStartJobs.get(id);
+    if (!job) return null;
+    const progress = readProgressFile(job.progressFile) || job.progress || { status: job.status, stage: job.status, pct: job.status === 'done' ? 100 : 0, detail: '' };
+    const elapsedSeconds = ((job.finishedAt || Date.now()) - job.startedAt) / 1000;
+    let stderrTail = '';
+    if (job.status === 'error') {
+        try { stderrTail = fs.readFileSync(job.stderrFile, 'utf8').slice(-4000); } catch (_) {}
+    }
+    return {
+        id: job.id,
+        status: job.status,
+        target: job.target,
+        pid: job.pid,
+        elapsedSeconds,
+        progress,
+        error: job.error,
+        stderrTail,
+        result: job.status === 'done' ? job.result : undefined
+    };
+};
+
+setInterval(() => {
+    const cutoff = Date.now() - 1000 * 60 * 60;
+    for (const [id, job] of freshStartJobs.entries()) {
+        if (job.finishedAt && job.finishedAt < cutoff) freshStartJobs.delete(id);
+    }
+}, 1000 * 60 * 10);
 
 const readRequestJson = (req) => new Promise((resolve, reject) => {
     let body = '';
@@ -206,6 +337,25 @@ const server = http.createServer((req, res) => {
         readRequestJson(req)
             .then(payload => sendJson(res, 200, generateLolManagerContext(payload)))
             .catch(err => sendJson(res, 400, { error: err.message }));
+        return;
+    }
+
+    if (req.url === '/lolmanager/api/generate/start' && req.method === 'POST') {
+        readRequestJson(req)
+            .then(payload => {
+                const job = startLolManagerGenerationJob(payload);
+                sendJson(res, 202, freshStartJobStatus(job.id));
+            })
+            .catch(err => sendJson(res, 400, { error: err.message }));
+        return;
+    }
+
+    if (req.url.startsWith('/lolmanager/api/generate/status') && req.method === 'GET') {
+        const requestUrl = new URL(req.url, 'http://localhost');
+        const id = requestUrl.searchParams.get('id');
+        const status = id ? freshStartJobStatus(id) : null;
+        if (!status) sendJson(res, 404, { error: 'job not found' });
+        else sendJson(res, 200, status);
         return;
     }
 
