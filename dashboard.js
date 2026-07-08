@@ -39,8 +39,11 @@ const serveLolManager = (req, res) => {
         path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_index.json'),
         path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_snapshot.json')
     ];
-    const assetRoot = path.join(LOLMANAGER_WEB_ROOT, 'data', 'assets', 'player_portraits');
-    const isAllowedAsset = filePath.startsWith(assetRoot + path.sep) && ['.png', '.webp', '.jpg', '.jpeg'].includes(path.extname(filePath).toLowerCase());
+    const assetRoots = [
+        path.join(LOLMANAGER_WEB_ROOT, 'data', 'assets', 'player_portraits'),
+        path.join(LOLMANAGER_WEB_ROOT, 'data', 'assets', 'team_logos')
+    ];
+    const isAllowedAsset = assetRoots.some((assetRoot) => filePath.startsWith(assetRoot + path.sep)) && ['.png', '.webp', '.jpg', '.jpeg', '.svg'].includes(path.extname(filePath).toLowerCase());
 
     if ((!allowed.includes(filePath) && !isAllowedAsset) || !fs.existsSync(filePath)) {
         res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
