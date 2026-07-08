@@ -10,6 +10,45 @@ import fs from 'fs';
 
 const PORT = 8088;
 const STORAGE_SERVER_PATH = '/Volumes/ROGALLY/github/MistVault/mistvault_storage_server';
+const LOLMANAGER_WEB_ROOT = '/Volumes/ROGALLY/github/LOLManager/game_client/fresh_start_web';
+
+const MIME_TYPES = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.png': 'image/png',
+    '.svg': 'image/svg+xml; charset=utf-8'
+};
+
+const serveLolManager = (req, res) => {
+    const requestUrl = new URL(req.url, 'http://localhost');
+    let relPath = decodeURIComponent(requestUrl.pathname.replace(/^\/lolmanager\/?/, ''));
+    if (!relPath || relPath.endsWith('/')) relPath += 'index.html';
+
+    const safePath = path.normalize(relPath).replace(/^(\.\.(\/|\\|$))+/, '');
+    const filePath = path.join(LOLMANAGER_WEB_ROOT, safePath);
+    const allowed = [
+        path.join(LOLMANAGER_WEB_ROOT, 'index.html'),
+        path.join(LOLMANAGER_WEB_ROOT, 'styles.css'),
+        path.join(LOLMANAGER_WEB_ROOT, 'main.js'),
+        path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_index.json'),
+        path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_snapshot.json')
+    ];
+
+    if (!allowed.includes(filePath) || !fs.existsSync(filePath)) {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Not found');
+        return;
+    }
+
+    const ext = path.extname(filePath);
+    res.writeHead(200, {
+        'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+        'Cache-Control': 'no-store'
+    });
+    fs.createReadStream(filePath).pipe(res);
+};
 
 // 스토리지 서버가 죽어있으면 자동으로 살려주는 함수
 const ensureStorageServer = () => {
@@ -66,7 +105,7 @@ const getListeningPorts = () => {
             { name: "📂 MistVault Storage", port: "8097" },
             { name: "⚔️ Veradom Codex", port: "8099" },
             { name: "🎮 LOLManager Admin", port: "8102" },
-            { name: "👻 MistVault Gateway", port: "8088" }
+            { name: "🏁 LOLManager Fresh Start", port: "8088", path: "/lolmanager/" }
         ];
 
         return coreServices.map(service => ({
@@ -79,6 +118,11 @@ const getListeningPorts = () => {
 };
 
 const server = http.createServer((req, res) => {
+    if (req.url === '/lolmanager' || req.url.startsWith('/lolmanager/')) {
+        serveLolManager(req, res);
+        return;
+    }
+
     const ports = getListeningPorts();
     const tailscaleIP = getTailscaleIP();
     
@@ -119,7 +163,7 @@ const server = http.createServer((req, res) => {
     `;
 
     ports.forEach(p => {
-        const url = `http://${tailscaleIP}:${p.port}`;
+        const url = `http://${tailscaleIP}:${p.port}${p.path || ''}`;
         html += `
             <a href="${url}" class="card" target="_blank">
                 <div>
