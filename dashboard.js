@@ -12,6 +12,9 @@ import fs from 'fs';
 const PORT = 8088;
 const STORAGE_SERVER_PATH = '/Volumes/ROGALLY/github/MistVault/mistvault_storage_server';
 const LOLMANAGER_WEB_ROOT = '/Volumes/ROGALLY/github/LOLManager/game_client/fresh_start_web';
+const LOLMANAGER_REPO_ROOT = '/Volumes/ROGALLY/github/LOLManager';
+const LOLMANAGER_PACKAGE_ROOT = path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_packages');
+const LOLMANAGER_PACKAGE_MANIFEST = path.join(LOLMANAGER_PACKAGE_ROOT, 'manifest.json');
 
 const MIME_TYPES = {
     '.html': 'text/html; charset=utf-8',
@@ -36,6 +39,7 @@ const serveLolManager = (req, res) => {
         path.join(LOLMANAGER_WEB_ROOT, 'index.html'),
         path.join(LOLMANAGER_WEB_ROOT, 'styles.css'),
         path.join(LOLMANAGER_WEB_ROOT, 'main.js'),
+        path.join(LOLMANAGER_WEB_ROOT, 'player-card.js'),
         path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_index.json'),
         path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_snapshot.json')
     ];
@@ -44,8 +48,9 @@ const serveLolManager = (req, res) => {
         path.join(LOLMANAGER_WEB_ROOT, 'data', 'assets', 'team_logos')
     ];
     const isAllowedAsset = assetRoots.some((assetRoot) => filePath.startsWith(assetRoot + path.sep)) && ['.png', '.webp', '.jpg', '.jpeg', '.svg'].includes(path.extname(filePath).toLowerCase());
+    const isAllowedPackage = filePath.startsWith(LOLMANAGER_PACKAGE_ROOT + path.sep) && path.extname(filePath).toLowerCase() === '.json';
 
-    if ((!allowed.includes(filePath) && !isAllowedAsset) || !fs.existsSync(filePath)) {
+    if ((!allowed.includes(filePath) && !isAllowedAsset && !isAllowedPackage) || !fs.existsSync(filePath)) {
         res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('Not found');
         return;
@@ -64,14 +69,56 @@ const readLolManagerContext = () => ({
     snapshot: JSON.parse(fs.readFileSync(path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_snapshot.json'), 'utf8'))
 });
 
+const normalizedLolManagerName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+const lolManagerIndexIsFresh = () => {
+    const indexPath = path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_index.json');
+    const dependencies = [
+        path.join(LOLMANAGER_REPO_ROOT, 'data_pipeline_v2', 'lolmanager_v2.db'),
+        path.join(LOLMANAGER_REPO_ROOT, 'data_pipeline_v2', 'scripts', 'export_fresh_start_game_index.py')
+    ];
+    try {
+        const indexMtime = fs.statSync(indexPath).mtimeMs;
+        return dependencies.every(dependency => !fs.existsSync(dependency) || indexMtime >= fs.statSync(dependency).mtimeMs);
+    } catch (_) {
+        return false;
+    }
+};
+
 const exportLolManagerIndex = () => {
-    const repoRoot = '/Volumes/ROGALLY/github/LOLManager';
     execFileSync('python3', [
         'data_pipeline_v2/scripts/export_fresh_start_game_index.py',
         '--export',
         path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_index.json')
-    ], { cwd: repoRoot, stdio: 'pipe' });
+    ], { cwd: LOLMANAGER_REPO_ROOT, stdio: 'pipe' });
     return JSON.parse(fs.readFileSync(path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_index.json'), 'utf8'));
+};
+
+const readOrExportLolManagerIndex = () => lolManagerIndexIsFresh()
+    ? JSON.parse(fs.readFileSync(path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_index.json'), 'utf8'))
+    : exportLolManagerIndex();
+
+const readPackagedLolManagerContext = ({ startYear, team, entryPhase }) => {
+    if (!fs.existsSync(LOLMANAGER_PACKAGE_MANIFEST)) return null;
+    const year = Number(startYear);
+    const phase = String(entryPhase || 'offseason');
+    const requested = normalizedLolManagerName(team);
+    const manifest = JSON.parse(fs.readFileSync(LOLMANAGER_PACKAGE_MANIFEST, 'utf8'));
+    const match = Object.entries(manifest.contexts || {}).find(([, row]) =>
+        Number(row.start_year) === year &&
+        String(row.entry_phase || 'offseason') === phase &&
+        ((row.normalized_aliases || []).includes(requested) || String(row.team_id) === String(team))
+    );
+    if (!match) return null;
+    const [key, row] = match;
+    const relative = String(row.path || '').replace(/^\.\//, '').replace(/^data\/fresh_start_packages\//, '');
+    const snapshotPath = path.resolve(LOLMANAGER_PACKAGE_ROOT, relative);
+    if (!snapshotPath.startsWith(path.resolve(LOLMANAGER_PACKAGE_ROOT) + path.sep) || !fs.existsSync(snapshotPath)) return null;
+    return {
+        index: readOrExportLolManagerIndex(),
+        snapshot: JSON.parse(fs.readFileSync(snapshotPath, 'utf8')),
+        package_cache: { hit: true, key, path: row.path, built_at: row.built_at }
+    };
 };
 
 const sendJson = (res, status, payload) => {
@@ -98,11 +145,29 @@ const startLolManagerGenerationJob = ({ startYear, team, entryPhase }) => {
     if (!team || String(team).length > 80) throw new Error('invalid team');
     const phase = entryPhase || 'offseason';
     const id = randomUUID();
-    const repoRoot = '/Volumes/ROGALLY/github/LOLManager';
+    const repoRoot = LOLMANAGER_REPO_ROOT;
     const progressFile = path.join('/tmp', `lolmanager-fresh-start-${id}.progress.json`);
     const stdoutFile = path.join('/tmp', `lolmanager-fresh-start-${id}.out.log`);
     const stderrFile = path.join('/tmp', `lolmanager-fresh-start-${id}.err.log`);
     const startedAt = Date.now();
+
+    const packaged = readPackagedLolManagerContext({ startYear: year, team, entryPhase: phase });
+    if (packaged) {
+        const job = {
+            id,
+            status: 'done',
+            startedAt,
+            finishedAt: Date.now(),
+            target: { startYear: year, team: String(team), entryPhase: String(phase) },
+            progressFile,
+            stdoutFile,
+            stderrFile,
+            progress: { status: 'done', stage: 'package_hit', pct: 100, detail: 'Prebuilt Fresh Start package loaded.' },
+            result: packaged
+        };
+        freshStartJobs.set(id, job);
+        return job;
+    }
 
     const current = readLolManagerContext();
     const currentTeam = current.snapshot?.team || {};
@@ -127,7 +192,7 @@ const startLolManagerGenerationJob = ({ startYear, team, entryPhase }) => {
         return job;
     }
 
-    exportLolManagerIndex();
+    readOrExportLolManagerIndex();
     fs.writeFileSync(progressFile, JSON.stringify({
         schema_version: 'fresh_start_generation_progress_v0',
         status: 'running',
@@ -243,8 +308,11 @@ const generateLolManagerContext = ({ startYear, team, entryPhase }) => {
         return current;
     }
 
-    const repoRoot = '/Volumes/ROGALLY/github/LOLManager';
-    exportLolManagerIndex();
+    const packaged = readPackagedLolManagerContext({ startYear: year, team, entryPhase: phase });
+    if (packaged) return packaged;
+
+    const repoRoot = LOLMANAGER_REPO_ROOT;
+    readOrExportLolManagerIndex();
     execFileSync('python3', [
         'data_pipeline_v2/scripts/export_fresh_start_game_snapshot.py',
         '--team', String(team),
@@ -325,7 +393,7 @@ const getListeningPorts = () => {
 const server = http.createServer((req, res) => {
     if (req.url === '/lolmanager/api/index' && req.method === 'GET') {
         try {
-            sendJson(res, 200, exportLolManagerIndex());
+            sendJson(res, 200, readOrExportLolManagerIndex());
         } catch (err) {
             sendJson(res, 500, { error: err.message });
         }
