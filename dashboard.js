@@ -277,11 +277,11 @@ setInterval(() => {
     }
 }, 1000 * 60 * 10);
 
-const readRequestJson = (req) => new Promise((resolve, reject) => {
+const readRequestJson = (req, maxBytes = 1024 * 64) => new Promise((resolve, reject) => {
     let body = '';
     req.on('data', chunk => {
         body += chunk;
-        if (body.length > 1024 * 64) reject(new Error('request too large'));
+        if (body.length > maxBytes) reject(new Error('request too large'));
     });
     req.on('end', () => {
         try {
@@ -292,6 +292,15 @@ const readRequestJson = (req) => new Promise((resolve, reject) => {
     });
     req.on('error', reject);
 });
+
+const runLolManagerSeasonAction = (action, payload) => {
+    if (!new Set(['init', 'jump', 'play', 'skip']).has(action)) throw new Error('invalid season action');
+    const stdout = execFileSync('python3', ['data_pipeline_v2/scripts/run_season_runtime_action.py', '--action', action], {
+        cwd: LOLMANAGER_REPO_ROOT, input: JSON.stringify(payload), encoding: 'utf8',
+        maxBuffer: 1024 * 1024 * 16, timeout: 120000
+    });
+    return JSON.parse(stdout);
+};
 
 const generateLolManagerContext = ({ startYear, team, entryPhase }) => {
     const year = Number(startYear);
@@ -432,6 +441,14 @@ const server = http.createServer((req, res) => {
         const status = id ? freshStartJobStatus(id) : null;
         if (!status) sendJson(res, 404, { error: 'job not found' });
         else sendJson(res, 200, status);
+        return;
+    }
+
+    if (req.url.startsWith('/lolmanager/api/season/') && req.method === 'POST') {
+        const action = req.url.slice('/lolmanager/api/season/'.length).split('?')[0];
+        readRequestJson(req, 1024 * 1024 * 4)
+            .then(payload => sendJson(res, 200, runLolManagerSeasonAction(action, payload)))
+            .catch(err => sendJson(res, 400, { error: err.message }));
         return;
     }
 
