@@ -15,6 +15,7 @@ const LOLMANAGER_WEB_ROOT = '/Volumes/ROGALLY/github/LOLManager/game_client/fres
 const LOLMANAGER_REPO_ROOT = '/Volumes/ROGALLY/github/LOLManager';
 const LOLMANAGER_PACKAGE_ROOT = path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_packages');
 const LOLMANAGER_PACKAGE_MANIFEST = path.join(LOLMANAGER_PACKAGE_ROOT, 'manifest.json');
+const LOLMANAGER_PYTHON = '/usr/local/bin/python3';
 
 const MIME_TYPES = {
     '.html': 'text/html; charset=utf-8',
@@ -68,6 +69,19 @@ const readLolManagerContext = () => ({
     index: JSON.parse(fs.readFileSync(path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_index.json'), 'utf8')),
     snapshot: JSON.parse(fs.readFileSync(path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_snapshot.json'), 'utf8'))
 });
+
+const runLolManagerMatchRoom = (action, payload = {}) => {
+    const args = ['data_pipeline_v2/scripts/match_room_bridge.py', '--action', action];
+    if (payload.saveId) args.push('--save-id', String(payload.saveId));
+    if (payload.blueTeamId !== undefined) args.push('--blue-team-id', String(payload.blueTeamId));
+    if (payload.redTeamId !== undefined) args.push('--red-team-id', String(payload.redTeamId));
+    if (payload.engineMode) args.push('--engine-mode', String(payload.engineMode));
+    if (payload.commandId) args.push('--command-id', String(payload.commandId));
+    if (payload.name) args.push('--name', String(payload.name));
+    if (payload.payload !== undefined) args.push('--payload-json', JSON.stringify(payload.payload || {}));
+    const output = execFileSync(LOLMANAGER_PYTHON, args, { cwd: LOLMANAGER_REPO_ROOT, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+    return JSON.parse(output);
+};
 
 const normalizedLolManagerName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
@@ -400,6 +414,23 @@ const getListeningPorts = () => {
 };
 
 const server = http.createServer((req, res) => {
+    if (req.url === '/lolmanager/api/match-room/catalog' && req.method === 'GET') {
+        try {
+            sendJson(res, 200, runLolManagerMatchRoom('catalog'));
+        } catch (err) {
+            sendJson(res, 500, { error: err.message });
+        }
+        return;
+    }
+
+    const matchRoomRoute = req.url.match(/^\/lolmanager\/api\/match-room\/(bootstrap|load|command)$/);
+    if (matchRoomRoute && req.method === 'POST') {
+        readRequestJson(req, 1024 * 1024 * 4)
+            .then(payload => sendJson(res, 200, runLolManagerMatchRoom(matchRoomRoute[1], payload)))
+            .catch(err => sendJson(res, 400, { error: err.message }));
+        return;
+    }
+
     if (req.url === '/lolmanager/api/index' && req.method === 'GET') {
         try {
             sendJson(res, 200, readOrExportLolManagerIndex());
