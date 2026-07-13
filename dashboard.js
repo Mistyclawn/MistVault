@@ -83,6 +83,32 @@ const runLolManagerMatchRoom = (action, payload = {}) => {
     return JSON.parse(output);
 };
 
+const runLolManagerHistoricalCanon = (action, payload = {}) => {
+    if (!['search', 'records'].includes(action)) throw new Error('invalid Historical Canon action');
+    const cutoff = String(payload.cutoff || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(cutoff)) throw new Error('invalid Historical Canon cutoff');
+    const args = ['data_pipeline_v2/scripts/historical_canon_runtime_service.py', '--action', action, '--cutoff', cutoff];
+    let stdin = undefined;
+    if (action === 'search') {
+        const query = String(payload.query || '');
+        if (query.length > 100) throw new Error('Historical Canon query too long');
+        args.push('--query', query, '--limit', String(Math.max(1, Math.min(Number(payload.limit) || 40, 100))));
+        for (const [flag, value] of [['--role', payload.role], ['--nationality', payload.nationality], ['--team', payload.team]]) {
+            if (value) args.push(flag, String(value).slice(0, 100));
+        }
+    } else {
+        if (!Number.isInteger(Number(payload.playerId))) throw new Error('invalid Historical Canon playerId');
+        args.push('--player-id', String(payload.playerId));
+        if (payload.saveDelta) {
+            stdin = JSON.stringify(payload.saveDelta);
+            if (stdin.length > 1024 * 1024) throw new Error('Historical Canon save delta too large');
+            args.push('--save-delta-stdin');
+        }
+    }
+    const output = execFileSync(LOLMANAGER_PYTHON, args, { cwd: LOLMANAGER_REPO_ROOT, encoding: 'utf8', input: stdin, maxBuffer: 32 * 1024 * 1024 });
+    return JSON.parse(output);
+};
+
 const normalizedLolManagerName = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
 const lolManagerIndexIsFresh = () => {
@@ -414,6 +440,14 @@ const getListeningPorts = () => {
 };
 
 const server = http.createServer((req, res) => {
+    const historicalCanonRoute = req.url.match(/^\/lolmanager\/api\/historical\/(search|records)$/);
+    if (historicalCanonRoute && req.method === 'POST') {
+        readRequestJson(req, 1024 * 1024)
+            .then(payload => sendJson(res, 200, runLolManagerHistoricalCanon(historicalCanonRoute[1], payload)))
+            .catch(err => sendJson(res, 400, { error: err.message }));
+        return;
+    }
+
     if (req.url === '/lolmanager/api/match-room/catalog' && req.method === 'GET') {
         try {
             sendJson(res, 200, runLolManagerMatchRoom('catalog'));
