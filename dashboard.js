@@ -49,10 +49,12 @@ const serveLolManager = (req, res) => {
         path.join(LOLMANAGER_WEB_ROOT, 'data', 'assets', 'player_portraits'),
         path.join(LOLMANAGER_WEB_ROOT, 'data', 'assets', 'team_logos')
     ];
+    const mapAssetRoot = path.join(LOLMANAGER_WEB_ROOT, 'data', 'assets', 'maps');
     const isAllowedAsset = assetRoots.some((assetRoot) => filePath.startsWith(assetRoot + path.sep)) && ['.png', '.webp', '.gif', '.jpg', '.jpeg', '.svg'].includes(path.extname(filePath).toLowerCase());
+    const isAllowedMapAsset = filePath.startsWith(mapAssetRoot + path.sep) && ['.png', '.webp', '.jpg', '.jpeg', '.json'].includes(path.extname(filePath).toLowerCase());
     const isAllowedPackage = filePath.startsWith(LOLMANAGER_PACKAGE_ROOT + path.sep) && path.extname(filePath).toLowerCase() === '.json';
 
-    if ((!allowed.includes(filePath) && !isAllowedAsset && !isAllowedPackage) || !fs.existsSync(filePath)) {
+    if ((!allowed.includes(filePath) && !isAllowedAsset && !isAllowedMapAsset && !isAllowedPackage) || !fs.existsSync(filePath)) {
         res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('Not found');
         return;
