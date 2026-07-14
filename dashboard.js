@@ -84,7 +84,7 @@ const runLolManagerMatchRoom = (action, payload = {}) => {
 };
 
 const runLolManagerCareerWorld = (action, payload = {}) => {
-    if (!new Set(['bootstrap', 'load', 'advance', 'start-match', 'command']).has(action)) throw new Error('invalid career-world action');
+    if (!new Set(['catalog', 'bootstrap', 'load', 'advance', 'start-match', 'command']).has(action)) throw new Error('invalid career-world action');
     const args = ['data_pipeline_v2/scripts/career_world_bridge.py', '--action', action];
     if (payload.saveId) args.push('--save-id', String(payload.saveId));
     if (payload.world !== undefined) args.push('--world-json', JSON.stringify(payload.world || {}));
@@ -461,7 +461,7 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    const careerWorldRoute = req.url.match(/^\/lolmanager\/api\/career-world\/(bootstrap|load|advance|start-match|command)$/);
+    const careerWorldRoute = req.url.match(/^\/lolmanager\/api\/career-world\/(catalog|bootstrap|load|advance|start-match|command)$/);
     if (careerWorldRoute && req.method === 'POST') {
         readRequestJson(req, 1024 * 1024 * 4)
             .then(payload => sendJson(res, 200, runLolManagerCareerWorld(careerWorldRoute[1], payload)))
