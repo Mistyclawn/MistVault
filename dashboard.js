@@ -83,6 +83,19 @@ const runLolManagerMatchRoom = (action, payload = {}) => {
     return JSON.parse(output);
 };
 
+const runLolManagerCareerWorld = (action, payload = {}) => {
+    if (!new Set(['bootstrap', 'load', 'advance', 'start-match', 'command']).has(action)) throw new Error('invalid career-world action');
+    const args = ['data_pipeline_v2/scripts/career_world_bridge.py', '--action', action];
+    if (payload.saveId) args.push('--save-id', String(payload.saveId));
+    if (payload.world !== undefined) args.push('--world-json', JSON.stringify(payload.world || {}));
+    if (payload.commandId) args.push('--command-id', String(payload.commandId));
+    if (payload.engineMode) args.push('--engine-mode', String(payload.engineMode));
+    if (payload.name) args.push('--name', String(payload.name));
+    if (payload.payload !== undefined) args.push('--payload-json', JSON.stringify(payload.payload || {}));
+    const output = execFileSync(LOLMANAGER_PYTHON, args, { cwd: LOLMANAGER_REPO_ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 120000 });
+    return JSON.parse(output);
+};
+
 const runLolManagerHistoricalCanon = (action, payload = {}) => {
     if (!['search', 'records'].includes(action)) throw new Error('invalid Historical Canon action');
     const cutoff = String(payload.cutoff || '');
@@ -444,6 +457,14 @@ const server = http.createServer((req, res) => {
     if (historicalCanonRoute && req.method === 'POST') {
         readRequestJson(req, 1024 * 1024)
             .then(payload => sendJson(res, 200, runLolManagerHistoricalCanon(historicalCanonRoute[1], payload)))
+            .catch(err => sendJson(res, 400, { error: err.message }));
+        return;
+    }
+
+    const careerWorldRoute = req.url.match(/^\/lolmanager\/api\/career-world\/(bootstrap|load|advance|start-match|command)$/);
+    if (careerWorldRoute && req.method === 'POST') {
+        readRequestJson(req, 1024 * 1024 * 4)
+            .then(payload => sendJson(res, 200, runLolManagerCareerWorld(careerWorldRoute[1], payload)))
             .catch(err => sendJson(res, 400, { error: err.message }));
         return;
     }
