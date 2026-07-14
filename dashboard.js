@@ -24,6 +24,7 @@ const MIME_TYPES = {
     '.json': 'application/json; charset=utf-8',
     '.png': 'image/png',
     '.webp': 'image/webp',
+    '.gif': 'image/gif',
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
     '.svg': 'image/svg+xml; charset=utf-8'
@@ -48,7 +49,7 @@ const serveLolManager = (req, res) => {
         path.join(LOLMANAGER_WEB_ROOT, 'data', 'assets', 'player_portraits'),
         path.join(LOLMANAGER_WEB_ROOT, 'data', 'assets', 'team_logos')
     ];
-    const isAllowedAsset = assetRoots.some((assetRoot) => filePath.startsWith(assetRoot + path.sep)) && ['.png', '.webp', '.jpg', '.jpeg', '.svg'].includes(path.extname(filePath).toLowerCase());
+    const isAllowedAsset = assetRoots.some((assetRoot) => filePath.startsWith(assetRoot + path.sep)) && ['.png', '.webp', '.gif', '.jpg', '.jpeg', '.svg'].includes(path.extname(filePath).toLowerCase());
     const isAllowedPackage = filePath.startsWith(LOLMANAGER_PACKAGE_ROOT + path.sep) && path.extname(filePath).toLowerCase() === '.json';
 
     if ((!allowed.includes(filePath) && !isAllowedAsset && !isAllowedPackage) || !fs.existsSync(filePath)) {
