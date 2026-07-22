@@ -37,6 +37,8 @@ const LOLMANAGER_CARD_LAB_FILES = new Set([
     'card-element.js',
     'card-spec.js',
     'card-base.css',
+    'trait-visual-spec.css',
+    'trait-visual-spec.js',
     'themes/live-gray.css',
     'fixtures/live-baseline.js'
 ]);
