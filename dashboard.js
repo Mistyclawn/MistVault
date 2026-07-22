@@ -13,6 +13,7 @@ const PORT = 8088;
 const STORAGE_SERVER_PATH = '/Volumes/ROGALLY/github/MistVault/mistvault_storage_server';
 const LOLMANAGER_WEB_ROOT = '/Volumes/ROGALLY/github/LOLManager/game_client/fresh_start_web';
 const LOLMANAGER_REPO_ROOT = '/Volumes/ROGALLY/github/LOLManager';
+const LOLMANAGER_CARD_LAB_ROOT = '/Volumes/ROGALLY/github/LOLManager-card-renderer/game_client/fresh_start_web/card_renderer';
 const LOLMANAGER_PACKAGE_ROOT = path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_packages');
 const LOLMANAGER_PACKAGE_MANIFEST = path.join(LOLMANAGER_PACKAGE_ROOT, 'manifest.json');
 const LOLMANAGER_PYTHON = '/usr/local/bin/python3';
@@ -28,6 +29,46 @@ const MIME_TYPES = {
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
     '.svg': 'image/svg+xml; charset=utf-8'
+};
+
+const LOLMANAGER_CARD_LAB_FILES = new Set([
+    'card-lab.html',
+    'card-lab.js',
+    'card-element.js',
+    'card-spec.js',
+    'card-base.css',
+    'themes/live-gray.css',
+    'fixtures/live-baseline.js'
+]);
+
+const serveLolManagerCardLab = (req, res) => {
+    const requestUrl = new URL(req.url, 'http://localhost');
+    let relPath;
+    try {
+        relPath = decodeURIComponent(requestUrl.pathname.replace(/^\/lolmanager-card-lab\/?/, ''));
+    } catch {
+        relPath = '';
+    }
+    if (!relPath || relPath.endsWith('/')) relPath += 'card-lab.html';
+    const normalized = path.posix.normalize(relPath);
+    const isAllowed = !relPath.includes('\\')
+        && !path.posix.isAbsolute(normalized)
+        && !normalized.startsWith('../')
+        && LOLMANAGER_CARD_LAB_FILES.has(normalized);
+    const filePath = path.join(LOLMANAGER_CARD_LAB_ROOT, normalized);
+
+    if (!isAllowed || !fs.existsSync(filePath)) {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Not found');
+        return;
+    }
+
+    const ext = path.extname(filePath);
+    res.writeHead(200, {
+        'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+        'Cache-Control': 'no-store'
+    });
+    fs.createReadStream(filePath).pipe(res);
 };
 
 const serveLolManager = (req, res) => {
@@ -541,6 +582,11 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    if (req.url === '/lolmanager-card-lab' || req.url.startsWith('/lolmanager-card-lab/')) {
+        serveLolManagerCardLab(req, res);
+        return;
+    }
+
     if (req.url === '/lolmanager' || req.url.startsWith('/lolmanager/')) {
         serveLolManager(req, res);
         return;
@@ -598,6 +644,17 @@ const server = http.createServer((req, res) => {
             </a>
         `;
     });
+
+    html += `
+        <a href="http://${tailscaleIP}:${PORT}/lolmanager-card-lab/" class="card" target="_blank">
+            <div>
+                <span class="status-dot online"></span>
+                <span class="process-name">🎴 LOLManager Card Lab</span>
+                <span class="port-label">:${PORT}</span>
+            </div>
+            <div class="arrow">➔</div>
+        </a>
+    `;
 
     html += `
             </div>
