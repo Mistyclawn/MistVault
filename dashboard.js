@@ -13,7 +13,7 @@ const PORT = 8088;
 const STORAGE_SERVER_PATH = '/Volumes/ROGALLY/github/MistVault/mistvault_storage_server';
 const LOLMANAGER_WEB_ROOT = '/Volumes/ROGALLY/github/LOLManager/game_client/fresh_start_web';
 const LOLMANAGER_REPO_ROOT = '/Volumes/ROGALLY/github/LOLManager';
-const LOLMANAGER_CARD_LAB_ROOT = '/Volumes/ROGALLY/github/LOLManager-card-renderer/game_client/fresh_start_web/card_renderer';
+const LOLMANAGER_CARD_LAB_ROOT = '/Volumes/ROGALLY/github/LOLManager-card-renderer/game_client/fresh_start_web';
 const LOLMANAGER_PACKAGE_ROOT = path.join(LOLMANAGER_WEB_ROOT, 'data', 'fresh_start_packages');
 const LOLMANAGER_PACKAGE_MANIFEST = path.join(LOLMANAGER_PACKAGE_ROOT, 'manifest.json');
 const LOLMANAGER_PYTHON = '/usr/local/bin/python3';
@@ -31,15 +31,7 @@ const MIME_TYPES = {
     '.svg': 'image/svg+xml; charset=utf-8'
 };
 
-const LOLMANAGER_CARD_LAB_FILES = new Set([
-    'card-lab.html',
-    'card-lab.js',
-    'card-element.js',
-    'card-spec.js',
-    'card-base.css',
-    'themes/live-gray.css',
-    'fixtures/live-baseline.js'
-]);
+const LOLMANAGER_CARD_LAB_EXTENSIONS = new Set(['.html', '.js', '.css', '.png', '.webp', '.gif', '.jpg', '.jpeg', '.svg']);
 
 const serveLolManagerCardLab = (req, res) => {
     const requestUrl = new URL(req.url, 'http://localhost');
@@ -49,15 +41,22 @@ const serveLolManagerCardLab = (req, res) => {
     } catch {
         relPath = '';
     }
-    if (!relPath || relPath.endsWith('/')) relPath += 'card-lab.html';
+    if (!relPath || relPath.endsWith('/')) relPath += 'card_renderer/card-lab.html';
     const normalized = path.posix.normalize(relPath);
+    const cardRuntimePath = normalized.startsWith('card_renderer/')
+        ? normalized.slice('card_renderer/'.length)
+        : null;
+    const isCardRuntime = cardRuntimePath
+        && cardRuntimePath !== 'tests'
+        && !cardRuntimePath.startsWith('tests/');
     const isAllowed = !relPath.includes('\\')
         && !path.posix.isAbsolute(normalized)
         && !normalized.startsWith('../')
-        && LOLMANAGER_CARD_LAB_FILES.has(normalized);
+        && LOLMANAGER_CARD_LAB_EXTENSIONS.has(path.posix.extname(normalized).toLowerCase())
+        && (normalized === 'card-spec-adapter.js' || isCardRuntime);
     const filePath = path.join(LOLMANAGER_CARD_LAB_ROOT, normalized);
 
-    if (!isAllowed || !fs.existsSync(filePath)) {
+    if (!isAllowed || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
         res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('Not found');
         return;
@@ -68,6 +67,12 @@ const serveLolManagerCardLab = (req, res) => {
         'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
         'Cache-Control': 'no-store'
     });
+    if (normalized === 'card_renderer/card-lab.html') {
+        const html = fs.readFileSync(filePath, 'utf8')
+            .replace('<head>', '<head>\n  <base href="/lolmanager-card-lab/card_renderer/">');
+        res.end(html);
+        return;
+    }
     fs.createReadStream(filePath).pipe(res);
 };
 
